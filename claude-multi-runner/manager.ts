@@ -236,15 +236,8 @@ export class ClaudeUnifiedPtyManager {
         return process.env.CLAUDE_CODE_GIT_BASH_PATH;
       }
 
-      const commonPaths = [
-        "D:\\Program Files\\Git\\bin\\bash.exe",
-        "D:\\Program Files\\Git\\usr\\bin\\bash.exe",
-        "C:\\Program Files\\Git\\bin\\bash.exe",
-        "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
-        "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
-        "C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe",
-      ];
-      for (const p of commonPaths) {
+      const gitPaths = this.findGitBashPaths();
+      for (const p of gitPaths) {
         if (fs.existsSync(p)) {
           return p;
         }
@@ -255,6 +248,51 @@ export class ClaudeUnifiedPtyManager {
     }
 
     return process.env.SHELL || "/bin/bash";
+  }
+
+  private findGitBashPaths(): string[] {
+    const paths: string[] = [];
+
+    const gitPathFromEnv = this.findGitFromPath();
+    if (gitPathFromEnv) {
+      const gitDir = path.dirname(path.dirname(gitPathFromEnv));
+      paths.push(
+        path.join(gitDir, "bin", "bash.exe"),
+        path.join(gitDir, "usr", "bin", "bash.exe")
+      );
+    }
+
+    const commonProgramDirs = [
+      process.env.ProgramFiles || "C:\\Program Files",
+      process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)",
+    ];
+
+    for (const dir of commonProgramDirs) {
+      const gitDir = path.join(dir, "Git");
+      paths.push(
+        path.join(gitDir, "bin", "bash.exe"),
+        path.join(gitDir, "usr", "bin", "bash.exe")
+      );
+    }
+
+    return paths;
+  }
+
+  private findGitFromPath(): string | null {
+    try {
+      const pathEnv = process.env.PATH || "";
+      const pathDirs = pathEnv.split(";");
+      
+      for (const dir of pathDirs) {
+        const gitExe = path.join(dir, "git.exe");
+        if (fs.existsSync(gitExe)) {
+          return gitExe;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
   }
 
   private async waitForClaudeReady(session: ClaudeSession, maxWaitMs: number): Promise<boolean> {
