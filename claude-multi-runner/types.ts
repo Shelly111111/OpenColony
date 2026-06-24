@@ -24,5 +24,4 @@ export interface ClaudeSession {
   startTime: Date;
   status: "running" | "completed" | "error" | "stopped";
   outputBuffer: string;
-  metadata?: Record<string, unknown>; // 用于存储调试信息等
 }

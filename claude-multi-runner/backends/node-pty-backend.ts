@@ -2,9 +2,9 @@
  * Node-PTY Backend 实现
  */
 
-import * as fs from "fs";
 import { PtyBackend } from "../types";
 import { VirtualScreen } from "../virtual-screen";
+import { findGitBashPath } from "../utils/git-bash";
 
 let nodePty: typeof import("node-pty") | null = null;
 
@@ -37,11 +37,12 @@ export class NodePtyBackend implements PtyBackend {
       throw new Error("node-pty 未安装");
     }
 
-    const shell = options.shell || this.getDefaultShell();
     const cols = options.cols || 120;
     const rows = options.rows || 40;
 
-    const gitBashPath = this.getGitBashPath();
+    // 获取 shell 路径：优先使用传入的 shell，否则自动查找
+    const shell = options.shell || (process.platform === "win32" ? findGitBashPath() : null) || process.env.SHELL || "/bin/bash";
+    const gitBashPath = process.platform === "win32" ? findGitBashPath() : null;
 
     const pty = nodePty.spawn(shell, [], {
       name: "xterm-256color",
@@ -58,13 +59,32 @@ export class NodePtyBackend implements PtyBackend {
       },
     });
 
-    const virtualScreen = new VirtualScreen({ cols, rows });
+    const virtualScreen = this.createVirtualScreen(id, cols, rows);
 
     const session = {
       pty,
       virtualScreen,
     };
     this.sessions.set(id, session);
+
+    // 处理 pty 数据，更新虚拟屏
+    pty.onData((data: string) => {
+      virtualScreen.process(data);
+    });
+
+    pty.onExit(({ exitCode }: { exitCode: number }) => {
+      this.sessions.delete(id);
+      if (this.onExit) {
+        this.onExit(id, exitCode);
+      }
+    });
+  }
+
+  /**
+   * 创建虚拟屏并设置回调
+   */
+  private createVirtualScreen(id: string, cols: number, rows: number): VirtualScreen {
+    const virtualScreen = new VirtualScreen({ cols, rows });
 
     // 设置虚拟屏回调：每次屏幕更新，输出完整屏幕内容
     virtualScreen.setScreenUpdateCallback((fullScreen: string) => {
@@ -80,47 +100,7 @@ export class NodePtyBackend implements PtyBackend {
       }
     });
 
-    // 处理 pty 数据，更新虚拟屏
-    pty.onData((data: string) => {
-      virtualScreen.process(data);
-    });
-
-    pty.onExit(({ exitCode }: { exitCode: number }) => {
-      this.sessions.delete(id);
-      if (this.onExit) {
-        this.onExit(id, exitCode);
-      }
-    });
-  }
-
-  private getGitBashPath(): string | null {
-    if (process.platform !== "win32") return null;
-
-    const commonPaths = [
-      "D:\\Program Files\\Git\\bin\\bash.exe",
-      "D:\\Program Files\\Git\\usr\\bin\\bash.exe",
-      "C:\\Program Files\\Git\\bin\\bash.exe",
-      "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
-      "C:\\Program Files (x86)\\Git\\bin\\bash.exe",
-      "C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe",
-    ];
-    for (const p of commonPaths) {
-      if (fs.existsSync(p)) {
-        return p;
-      }
-    }
-    return null;
-  }
-
-  private getDefaultShell(): string {
-    if (process.platform === "win32") {
-      const gitBashPath = this.getGitBashPath();
-      if (gitBashPath) {
-        return gitBashPath;
-      }
-      return process.env.COMSPEC || "cmd.exe";
-    }
-    return process.env.SHELL || "/bin/bash";
+    return virtualScreen;
   }
 
   write(id: string, data: string): void {
@@ -134,13 +114,8 @@ export class NodePtyBackend implements PtyBackend {
     const session = this.sessions.get(id);
     if (session) {
       session.pty.resize(cols, rows);
-      // 重新创建虚拟屏
-      session.virtualScreen = new VirtualScreen({ cols, rows });
-      session.virtualScreen.setScreenUpdateCallback((fullScreen: string) => {
-        if (this.onData) {
-          this.onData(id, fullScreen);
-        }
-      });
+      // 重新创建虚拟屏（包含完整的回调设置）
+      session.virtualScreen = this.createVirtualScreen(id, cols, rows);
     }
   }
 

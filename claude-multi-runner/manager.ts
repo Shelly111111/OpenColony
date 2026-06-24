@@ -7,6 +7,7 @@ import * as path from "path";
 import { PtyBackend, ClaudeSession } from "./types";
 import { createPtyBackend } from "./backends/pty-selector";
 import { ensureLogDir, createLogFile, writeToLog, LOG_DIR } from "./utils/logger";
+import { findGitBashPath, getDefaultShell } from "./utils/git-bash";
 
 // 屏幕日志文件后缀
 const SCREEN_LOG_SUFFIX = ".screen.log";
@@ -122,23 +123,22 @@ export class ClaudeUnifiedPtyManager {
       const session = this.sessions.find(s => s.terminalId === terminalId);
       if (session && changedLines.length > 0) {
         // 过滤无意义的行：空行、状态动画、状态栏等
-        const meaningfulLines = changedLines.filter(line => {
-          const cleanContent = this.stripAnsi(line.content);
-          return !this.isNoiseLine(cleanContent);
-        });
+        // 同时预先清理 ANSI 码，避免重复调用 stripAnsi
+        const meaningfulLines = changedLines
+          .map(line => ({ ...line, cleanContent: this.stripAnsi(line.content) }))
+          .filter(line => !this.isNoiseLine(line.cleanContent));
 
         if (meaningfulLines.length > 0) {
           const timestamp = new Date().toISOString();
           const diffContent = `[${timestamp}] ` +
-            meaningfulLines.map(line => `  ${this.stripAnsi(line.content)}`).join('\n') + '\n';
+            meaningfulLines.map(line => `  ${line.cleanContent}`).join('\n') + '\n';
           fs.appendFileSync(session.logFile, diffContent, 'utf-8');
 
           // 终端输出变化的行
           const color = COLORS[(session.id - 1) % COLORS.length];
           const prefix = `[终端${session.id}]`;
           for (const line of meaningfulLines) {
-            const cleanContent = this.stripAnsi(line.content);
-            process.stdout.write(`${color}${prefix}${RESET} ${cleanContent}\n`);
+            process.stdout.write(`${color}${prefix}${RESET} ${line.cleanContent}\n`);
           }
         }
       }
@@ -202,11 +202,11 @@ export class ClaudeUnifiedPtyManager {
     writeToLog(session.logFile, `执行命令: ${command}`);
     console.log(formatOutput(sessionId, `启动终端，准备执行: "${command}" (${this.backendType})`));
 
-    const gitBashPath = this.getGitBashPath();
-    writeToLog(session.logFile, `使用 Shell: ${gitBashPath}`);
+    const shellPath = getDefaultShell();
+    writeToLog(session.logFile, `使用 Shell: ${shellPath}`);
 
     await this.backend.spawn(terminalId, {
-      shell: gitBashPath,
+      shell: shellPath,
       cols: 120,
       rows: 40,
       env: {
@@ -255,71 +255,6 @@ export class ClaudeUnifiedPtyManager {
 
     writeToLog(session.logFile, `发送用户命令到 Claude: "${command}"`);
     this.backend.write(terminalId, command + "\r");
-  }
-
-  private getGitBashPath(): string {
-    if (process.platform === "win32") {
-      if (process.env.CLAUDE_CODE_GIT_BASH_PATH) {
-        return process.env.CLAUDE_CODE_GIT_BASH_PATH;
-      }
-
-      const gitPaths = this.findGitBashPaths();
-      for (const p of gitPaths) {
-        if (fs.existsSync(p)) {
-          return p;
-        }
-      }
-
-      console.warn('[WARN] Git Bash 未找到，使用 cmd.exe 作为替代');
-      return process.env.COMSPEC || "C:\\Windows\\System32\\cmd.exe";
-    }
-
-    return process.env.SHELL || "/bin/bash";
-  }
-
-  private findGitBashPaths(): string[] {
-    const paths: string[] = [];
-
-    const gitPathFromEnv = this.findGitFromPath();
-    if (gitPathFromEnv) {
-      const gitDir = path.dirname(path.dirname(gitPathFromEnv));
-      paths.push(
-        path.join(gitDir, "bin", "bash.exe"),
-        path.join(gitDir, "usr", "bin", "bash.exe")
-      );
-    }
-
-    const commonProgramDirs = [
-      process.env.ProgramFiles || "C:\\Program Files",
-      process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)",
-    ];
-
-    for (const dir of commonProgramDirs) {
-      const gitDir = path.join(dir, "Git");
-      paths.push(
-        path.join(gitDir, "bin", "bash.exe"),
-        path.join(gitDir, "usr", "bin", "bash.exe")
-      );
-    }
-
-    return paths;
-  }
-
-  private findGitFromPath(): string | null {
-    try {
-      const pathEnv = process.env.PATH || "";
-      const pathDirs = pathEnv.split(";");
-      
-      for (const dir of pathDirs) {
-        const gitExe = path.join(dir, "git.exe");
-        if (fs.existsSync(gitExe)) {
-          return gitExe;
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return null;
   }
 
   private async waitForClaudeReady(session: ClaudeSession, maxWaitMs: number): Promise<boolean> {
