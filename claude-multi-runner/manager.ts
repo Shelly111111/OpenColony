@@ -209,6 +209,9 @@ export class ClaudeUnifiedPtyManager {
       shell: gitBashPath,
       cols: 120,
       rows: 40,
+      env: {
+        CLAUDE_SESSION_ID: String(sessionId),
+      },
     });
 
     this.activeCount++;
@@ -216,7 +219,31 @@ export class ClaudeUnifiedPtyManager {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     writeToLog(session.logFile, `发送 'claude --dangerously-skip-permissions' 命令启动 Claude CLI`);
-    this.backend.write(terminalId, "claude --dangerously-skip-permissions\r");
+
+    // 构建 Stop hook 配置
+    // Windows 路径需要转换为正斜杠，避免 JSON 转义问题
+    const hookScriptPath = path.join(process.cwd(), "hooks", "completion-marker.sh").replace(/\\/g, "/");
+    const settingsJson = JSON.stringify({
+      hooks: {
+        Stop: [
+          {
+            matcher: "",
+            hooks: [
+              {
+                type: "command",
+                command: hookScriptPath
+              }
+            ]
+          }
+        ]
+      }
+    });
+
+    // 使用 --settings 参数传递 Stop hook 配置
+    // 在 bash 中使用单引号包裹 JSON
+    const claudeCmd = `claude --dangerously-skip-permissions --settings '${settingsJson}'`;
+    writeToLog(session.logFile, `启动命令: ${claudeCmd}`);
+    this.backend.write(terminalId, claudeCmd + "\r");
 
     await new Promise((resolve) => setTimeout(resolve, 2000));
     const claudeReady = await this.waitForClaudeReady(session, 30000);
@@ -364,15 +391,45 @@ export class ClaudeUnifiedPtyManager {
   }
 
   private async waitForCompletion(): Promise<void> {
+    const markerDir = path.join(LOG_DIR, ".completion");
+
     return new Promise((resolve) => {
       const checkInterval = setInterval(() => {
+        // 检查每个 running 状态的 session
+        for (const session of this.sessions) {
+          if (session.status === "running") {
+            const markerFile = path.join(markerDir, `completed-${session.id}.marker`);
+
+            // 检查标记文件是否存在
+            if (fs.existsSync(markerFile)) {
+              session.status = "completed";
+              writeToLog(session.logFile, `[INFO] 检测到完成标记文件: ${markerFile}`);
+              console.log(formatOutput(session.id, `任务完成 (检测到 Stop hook 标记)`));
+              this.activeCount--;
+
+              const endTime = new Date();
+              const duration = (endTime.getTime() - session.startTime.getTime()) / 1000;
+              writeToLog(
+                session.logFile,
+                `=== 会话汇总 ===\n开始时间: ${session.startTime.toISOString()}\n结束时间: ${endTime.toISOString()}\n运行时长: ${duration}秒\n命令: ${session.command}\n状态: ${session.status}`
+              );
+
+              // 删除标记文件（避免重复检测）
+              fs.unlinkSync(markerFile);
+
+              // 强制关闭 bash shell
+              this.backend?.kill(session.terminalId);
+            }
+          }
+        }
+
         if (this.activeCount === 0) {
           clearInterval(checkInterval);
           console.log("\n\x1b[36m=== 所有 Claude 终端已完成 ===\x1b[0m");
           this.printSummary();
           resolve();
         }
-      }, 1000);
+      }, 1000);  // 每 1 秒检查一次标记文件
     });
   }
 

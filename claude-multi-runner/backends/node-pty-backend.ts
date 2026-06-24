@@ -31,6 +31,7 @@ export class NodePtyBackend implements PtyBackend {
     shell?: string;
     cols?: number;
     rows?: number;
+    env?: Record<string, string>;
   } = {}): Promise<void> {
     if (!nodePty) {
       throw new Error("node-pty 未安装");
@@ -49,6 +50,7 @@ export class NodePtyBackend implements PtyBackend {
       cwd: process.cwd(),
       env: {
         ...process.env,
+        ...options.env,  // 合合传入的环境变量
         TERM: "xterm-256color",
         COLORTERM: "truecolor",
         FORCE_COLOR: "1",
