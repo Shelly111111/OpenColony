@@ -22,6 +22,8 @@ const STATUS_ANIMATION_CHARS = ['✶', '✻', '✽', '✢', '·', '○', '◐', 
 // Claude 状态栏关键词（需要过滤）
 const STATUS_BAR_KEYWORDS = [
   'bypass permissions',
+  'bypass─permissions─on',
+  'ctrl+b to run in background',
   'meta+m to cycle',
   'medium',
   '/effort',

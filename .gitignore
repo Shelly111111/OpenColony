@@ -5,6 +5,9 @@ node_modules/
 dist/
 build/
 
+# Documentation
+doc/
+
 # Logs
 *.log
 logs/
