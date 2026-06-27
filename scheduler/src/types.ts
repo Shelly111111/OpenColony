@@ -1,0 +1,203 @@
+/**
+ * 调度中心核心类型定义
+ */
+
+import { z } from "zod";
+
+// LLM任务拆分相关类型
+export interface LLMPlanSubTask {
+  name: string;
+  description: string;
+  workerType: string;
+  dependencies: number[];  // 依赖的子任务索引
+}
+
+export interface LLMPlanResponse {
+  subTasks: LLMPlanSubTask[];
+  estimatedDuration?: number;
+  reasoning?: string;
+}
+
+// ==================== 基础枚举 ====================
+
+/**
+ * 任务状态
+ */
+export enum TaskStatus {
+  PENDING = "pending",
+  RUNNING = "running",
+  COMPLETED = "completed",
+  FAILED = "failed",
+  PARTIAL = "partial",
+  RETRYING = "retrying"
+}
+
+/**
+ * 任务优先级
+ */
+export enum TaskPriority {
+  P0 = "P0",
+  P1 = "P1",
+  P2 = "P2"
+}
+
+/**
+ * Worker类型
+ */
+export enum WorkerType {
+  CODE = "code_agent",
+  DATA = "data_agent",
+  VIZ = "viz_agent",
+  REVIEW = "review_agent",
+  GENERAL = "general_agent"
+}
+
+/**
+ * 仲裁模式
+ */
+export enum ArbitrationMode {
+  CONFIDENCE_VOTE = "confidence_vote",
+  AGENT_PRIORITY = "agent_priority",
+  MERGE_DIFF = "merge_diff"
+}
+
+// ==================== 核心数据结构 ====================
+
+/**
+ * 统一Worker输出Schema
+ */
+export const WorkerOutputSchema = z.object({
+  status: z.enum(["success", "fail", "partial"]),
+  data: z.any(),
+  confidence: z.number().min(0).max(1),
+  source_agent: z.string(),
+  trace_id: z.string(),
+  error: z.string().optional()
+});
+
+export type WorkerOutput = z.infer<typeof WorkerOutputSchema>;
+
+/**
+ * 子任务定义
+ */
+export interface SubTask {
+  id: string;
+  parentTaskId: string;
+  name: string;
+  description: string;
+  workerType: WorkerType;
+  priority: TaskPriority;
+  status: TaskStatus;
+  dependencies: string[]; // 依赖的子任务ID列表
+  command: string; // 要执行的命令
+  output?: WorkerOutput;
+  error?: string;
+  retryCount: number;
+  maxRetries: number;
+  createdAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+  assignedWorkerId?: string;
+}
+
+/**
+ * 主任务定义
+ */
+export interface MainTask {
+  id: string;
+  name: string;
+  description: string;
+  userRequest: string;
+  constraints: string[];
+  deliveryStandards: string[];
+  priority: TaskPriority;
+  status: TaskStatus;
+  subTasks: Map<string, SubTask>;
+  dag: DAG;
+  output?: any;
+  error?: string;
+  createdAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+  traceId: string;
+  logDir?: string; // 日志目录路径
+  masterLogFile?: string; // Master + PlanExecutor 合并日志文件路径
+}
+
+/**
+ * DAG节点
+ */
+export interface DAGNode {
+  id: string;
+  name: string;
+  dependencies: string[];
+  subTaskId: string;
+}
+
+/**
+ * DAG图结构
+ */
+export interface DAG {
+  nodes: Map<string, DAGNode>;
+  edges: Map<string, string[]>; // 源节点 -> 目标节点列表
+}
+
+/**
+ * Worker实例
+ */
+export interface WorkerInstance {
+  id: string;
+  type: WorkerType;
+  status: "idle" | "busy" | "error";
+  sessionId?: number; // claude-multi-runner的会话ID
+  ptySessionId?: number; // PTY会话ID（对应ClaudeUnifiedPtyManager的session.id）
+  currentTaskId?: string;
+  logFile?: string;
+  screenLogFile?: string;
+  createdAt: Date;
+  lastUsedAt?: Date;
+}
+
+/**
+ * 任务执行结果
+ */
+export interface TaskResult {
+  success: boolean;
+  data?: any;
+  error?: string;
+  traceId: string;
+  duration: number;
+}
+
+/**
+ * 调度配置
+ */
+export interface SchedulerConfig {
+  maxWorkers: number;
+  defaultMaxRetries: number;
+  defaultTimeoutMs: number;
+  arbitrationMode: ArbitrationMode;
+  enableReview: boolean;
+  workerTypes: WorkerType[];
+}
+
+/**
+ * 计划模块输出
+ */
+export interface PlanOutput {
+  subTasks: SubTask[];
+  dag: DAG;
+  estimatedDuration: number;
+  requiredWorkers: number;
+}
+
+/**
+ * 仲裁结果
+ */
+export interface ArbitrationResult {
+  resolved: boolean;
+  finalOutput?: any;
+  conflicts?: string[];
+  requiresUserInput: boolean;
+  userPrompt?: string;
+}

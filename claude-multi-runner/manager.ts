@@ -224,7 +224,7 @@ export class ClaudeUnifiedPtyManager {
 
     // 构建 Stop hook 配置
     // Windows 路径需要转换为正斜杠，避免 JSON 转义问题
-    const hookScriptPath = path.join(process.cwd(), "hooks", "completion-marker.sh").replace(/\\/g, "/");
+    const hookScriptPath = path.join(process.cwd(), "claude-multi-runner/hooks", "completion-marker.sh").replace(/\\/g, "/");
     const settingsJson = JSON.stringify({
       hooks: {
         Stop: [
@@ -256,7 +256,46 @@ export class ClaudeUnifiedPtyManager {
     }
 
     writeToLog(session.logFile, `发送用户命令到 Claude: "${command}"`);
-    this.backend.write(terminalId, command + "\r");
+    // 对于长命令，使用分块发送以避免 PTY 缓冲区限制
+    await this.sendCommandInChunks(terminalId, command, session.logFile);
+  }
+
+  /**
+   * 分块发送命令，避免 PTY 缓冲区限制
+   * 对于长命令，将其分成小块发送，每块之间添加延时
+   */
+  private async sendCommandInChunks(terminalId: string, command: string, logFile: string): Promise<void> {
+    const CHUNK_SIZE = 10; // 每块100个字符
+    const CHUNK_DELAY_MS = 10; // 每块之间的延时（毫秒）
+    const COMMAND_END_DELAY_MS = 100; // 发送完命令后的延时
+
+    // 如果命令长度小于阈值，直接发送
+    if (command.length <= CHUNK_SIZE * 2) {
+      writeToLog(logFile, `[INFO] 命令长度 ${command.length} 字符，直接发送`);
+      this.backend!.write(terminalId, command + "\r");
+      await new Promise(resolve => setTimeout(resolve, COMMAND_END_DELAY_MS));
+      return;
+    }
+
+    // 长命令使用分块发送
+    writeToLog(logFile, `[INFO] 命令长度 ${command.length} 字符，使用分块发送（每块 ${CHUNK_SIZE} 字符）`);
+
+    // 将命令按块发送
+    for (let i = 0; i < command.length; i += CHUNK_SIZE) {
+      const chunk = command.slice(i, i + CHUNK_SIZE);
+      this.backend!.write(terminalId, chunk);
+
+      if (i + CHUNK_SIZE < command.length) {
+        await new Promise(resolve => setTimeout(resolve, CHUNK_DELAY_MS));
+      }
+    }
+
+    // 发送回车执行命令
+    writeToLog(logFile, `[INFO] 命令分块发送完成，发送回车执行`);
+    this.backend!.write(terminalId, "\r");
+
+    // 等待命令执行
+    await new Promise(resolve => setTimeout(resolve, COMMAND_END_DELAY_MS));
   }
 
   private async waitForClaudeReady(session: ClaudeSession, maxWaitMs: number): Promise<boolean> {

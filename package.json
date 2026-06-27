@@ -1,0 +1,50 @@
+{
+  "name": "opencolony",
+  "version": "2.0.0",
+  "description": "OpenColony - Claude CLI调度系统，包含PTY管理器和调度中心",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "run": "ts-node src/index.ts run",
+    "scheduler": "ts-node src/index.ts run",
+    "claude": "ts-node claude-multi-runner/main.ts",
+    "claude:direct": "ts-node src/index.ts claude",
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "clean": "rm -rf dist",
+    "predev": "npm run clean",
+    "dev": "ts-node-dev src/index.ts",
+    "lint": "eslint . --ext .ts",
+    "test": "echo \"Tests not implemented yet\" && exit 0"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "pty",
+    "terminal",
+    "scheduler",
+    "multi-runner",
+    "ai",
+    "automation"
+  ],
+  "author": "Shelly111111",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.27.0",
+    "dotenv": "^16.4.0",
+    "node-pty": "^1.0.0",
+    "p-queue": "^8.0.1",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.3.3",
+    "uuid": "^9.0.1",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/uuid": "^9.0.7",
+    "ts-node-dev": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
