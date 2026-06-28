@@ -265,7 +265,7 @@ export class ClaudeUnifiedPtyManager {
    * 对于长命令，将其分成小块发送，每块之间添加延时
    */
   private async sendCommandInChunks(terminalId: string, command: string, logFile: string): Promise<void> {
-    const CHUNK_SIZE = 80; // 每块80个字符（一行的最大值）
+    const CHUNK_SIZE = 50; // 每块50个字符（一行的最大值）
     const CHUNK_DELAY_MS = 20; // 每块之间的延时（毫秒）
     const COMMAND_END_DELAY_MS = 200; // 发送完命令后的延时
 
