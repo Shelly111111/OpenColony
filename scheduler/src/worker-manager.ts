@@ -377,6 +377,7 @@ ${cleanedOutput}
         };
 
         this.writeLog(logFile, `[LLM-PARSE] LLM解析成功，状态: ${result.status} (强制成功)`);
+        this.writeLog(logFile, `[LLM-PARSE] 解析结果: ${JSON.stringify(result)}`);
         return result;
 
       } catch (parseError) {
