@@ -13,6 +13,7 @@ import {
   WorkerOutput,
   SchedulerConfig
 } from "./types";
+import { getLLMClient } from "./llm-client";
 
 
 const { ClaudeUnifiedPtyManager } = require('../../claude-multi-runner/manager');
@@ -145,8 +146,8 @@ export class WorkerManager {
       this.writeLog(logFile, `[PTY] 输出长度: ${output.length}`);
       this.writeLog(logFile, `[PTY] 输出内容:\n${output.substring(0, 2000)}...`);
 
-      // 解析输出为标准格式
-      const parsedOutput = this.parseWorkerOutput(output, worker, traceId);
+      // 解析输出为标准格式（使用LLM解析混乱的PTY输出）
+      const parsedOutput = await this.parseWorkerOutputWithLLM(output, worker, traceId, logFile);
 
       this.writeLog(logFile, `[RESULT] 解析后的状态: ${parsedOutput.status}`);
       this.writeLog(logFile, `[RESULT] 置信度: ${parsedOutput.confidence}`);
@@ -276,7 +277,121 @@ export class WorkerManager {
   }
 
   /**
-   * 解析Worker输出为标准格式
+   * 使用LLM解析混乱的PTY输出为JSON格式
+   * 作为主解析方法，失败时降级到传统解析
+   */
+  private async parseWorkerOutputWithLLM(
+    rawOutput: string,
+    worker: WorkerInstance,
+    traceId: string,
+    logFile: string
+  ): Promise<WorkerOutput> {
+    try {
+      const llmClient = getLLMClient();
+
+      const systemPrompt = `你是一个专业输出解析器。用户将提供从PTY终端捕获的Claude CLI输出，其中包含ANSI转义码、终端UI元素、重复内容等混乱信息。
+
+你的任务是：
+1. 从混乱的输出中提取真正有意义的任务执行结果
+2. 忽略ANSI转义码、终端UI、进度指示器、重复内容等噪音
+3. 识别任务的执行状态（成功/失败/部分成功）
+4. 将提取的结果格式化为有效的JSON
+
+输出必须是有效的JSON对象，包含以下字段：
+- status: 必须是对象，包含 "success" | "fail" | "partial" 中的一个
+- data: 任务执行的结果数据（可以是字符串、对象或数组）
+- confidence: 0-1之间的数字，表示解析的可信度
+- source_agent: 固定为 "${worker.type}"
+- trace_id: 固定为 "${traceId}"
+
+如果无法提取有效结果，返回：
+{
+  "status": "fail",
+  "data": null,
+  "confidence": 0,
+  "source_agent": "${worker.type}",
+  "trace_id": "${traceId}",
+  "error": "无法从输出中提取有效结果"
+}
+
+只返回JSON对象，不要返回其他内容。`;
+
+      // 清理输出中的ANSI转义码（简单清理，让LLM做主要解析）
+      const cleanedOutput = rawOutput
+        .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '') // 移除ANSI转义码
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // 移除控制字符
+        .substring(0, 30000); // 限制长度避免超出token限制
+
+      const userPrompt = `请从以下PTY输出中提取任务执行结果并格式化为JSON。注意忽略ANSI转义码、终端UI等噪音，只关注实际的任务执行结果。
+
+PTY输出：
+\`\`\`
+${cleanedOutput}
+\`\`\`
+
+请只返回JSON对象，不要其他解释。`;
+
+      this.writeLog(logFile, `[LLM-PARSE] 使用LLM解析输出，输出长度: ${cleanedOutput.length}`);
+
+      const response = await llmClient.ask(userPrompt, {
+        systemPrompt,
+        maxTokens: 4096,
+        temperature: 0.1
+      });
+
+      if (!response.success || !response.content) {
+        this.writeLog(logFile, `[LLM-PARSE] LLM调用失败: ${response.error}`);
+        throw new Error(response.error || 'LLM调用失败');
+      }
+
+      // 从LLM响应中提取JSON
+      const content = response.content;
+      let jsonStr = content;
+
+      // 尝试从markdown代码块中提取JSON
+      const codeBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1];
+      }
+
+      // 尝试解析JSON
+      try {
+        const parsed = JSON.parse(jsonStr);
+
+        // 验证必需字段
+        if (!parsed.status || parsed.data === undefined) {
+          throw new Error('缺少必需字段 status 或 data');
+        }
+
+        const result: WorkerOutput = {
+          status: parsed.status as "success" | "fail" | "partial",
+          data: parsed.data,
+          confidence: parsed.confidence || 0.8,
+          source_agent: parsed.source_agent || worker.type,
+          trace_id: parsed.trace_id || traceId,
+          error: parsed.error
+        };
+
+        this.writeLog(logFile, `[LLM-PARSE] LLM解析成功，状态: ${result.status}`);
+        return result;
+
+      } catch (parseError) {
+        this.writeLog(logFile, `[LLM-PARSE] JSON解析失败: ${parseError}`);
+        this.writeLog(logFile, `[LLM-PARSE] LLM原始输出: ${content.substring(0, 500)}`);
+        throw new Error(`JSON解析失败: ${parseError}`);
+      }
+
+    } catch (error) {
+      this.writeLog(logFile, `[LLM-PARSE] LLM解析异常: ${error}`);
+      console.error(`[WorkerManager] LLM解析失败，降级到传统解析方法:`, error);
+
+      // 降级到原来的解析方法
+      return this.parseWorkerOutput(rawOutput, worker, traceId);
+    }
+  }
+
+  /**
+   * 解析Worker输出为标准格式（传统方法，作为降级方案）
    */
   private parseWorkerOutput(rawOutput: string, worker: WorkerInstance, traceId: string): WorkerOutput {
     // 尝试从输出中提取JSON格式的结果
