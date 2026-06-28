@@ -210,9 +210,9 @@ export class PlanExecutor {
 3. 定义正确的依赖关系
 
 可用的Agent类型：
-- general_agent：通用任务，需求分析、方案设计等
+- general_agent：通用任务，可以做任何类型的任务
 - code_agent：代码实现、测试等编程相关任务
-- review_agent：代码评审、结果验证等
+- review_agent：评审、结果验证等
 - data_agent：数据分析、处理等
 - viz_agent：数据可视化等
 
