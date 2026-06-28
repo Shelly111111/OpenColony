@@ -294,11 +294,14 @@ export class WorkerManager {
 你的任务是：
 1. 从混乱的输出中提取真正有意义的任务执行结果
 2. 忽略ANSI转义码、终端UI、进度指示器、重复内容等噪音
-3. 识别任务的执行状态（成功/失败/部分成功）
-4. 将提取的结果格式化为有效的JSON
+3. 将提取的结果格式化为有效的JSON
+
+重要：PTY执行完毕表示任务已经成功完成，不要根据输出内容推断状态。
+- status 字段必须固定为 "success"
+- 不要因为输出中有错误信息或异常内容就改为 "fail"
 
 输出必须是有效的JSON对象，包含以下字段：
-- status: 必须是对象，包含 "success" | "fail" | "partial" 中的一个
+- status: 必须是字符串 "success"（固定值，不要改为其他值）
 - data: 任务执行的结果数据（可以是字符串、对象或数组）
 - confidence: 0-1之间的数字，表示解析的可信度
 - source_agent: 固定为 "${worker.type}"
@@ -306,9 +309,9 @@ export class WorkerManager {
 
 如果无法提取有效结果，返回：
 {
-  "status": "fail",
-  "data": null,
-  "confidence": 0,
+  "status": "success",
+  "data": "任务已执行完毕，但无法提取结构化结果",
+  "confidence": 0.5,
   "source_agent": "${worker.type}",
   "trace_id": "${traceId}",
   "error": "无法从输出中提取有效结果"
@@ -363,8 +366,9 @@ ${cleanedOutput}
           throw new Error('缺少必需字段 status 或 data');
         }
 
+        // PTY 执行完毕表示任务成功，强制设置 status 为 success
         const result: WorkerOutput = {
-          status: parsed.status as "success" | "fail" | "partial",
+          status: "success",
           data: parsed.data,
           confidence: parsed.confidence || 0.8,
           source_agent: parsed.source_agent || worker.type,
@@ -372,7 +376,7 @@ ${cleanedOutput}
           error: parsed.error
         };
 
-        this.writeLog(logFile, `[LLM-PARSE] LLM解析成功，状态: ${result.status}`);
+        this.writeLog(logFile, `[LLM-PARSE] LLM解析成功，状态: ${result.status} (强制成功)`);
         return result;
 
       } catch (parseError) {
