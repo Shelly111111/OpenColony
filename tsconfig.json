@@ -12,6 +12,7 @@
     "resolveJsonModule": true,
     "moduleResolution": "node",
     "allowSyntheticDefaultImports": true,
+    "downlevelIteration": true,
     "paths": {
       "@scheduler/*": ["./scheduler/src/*"],
       "@claude-runner/*": ["./claude-multi-runner/*"]

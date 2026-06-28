@@ -100,7 +100,7 @@ export class WorkerManager {
       // 确保 Git Bash 路径已设置（防止 PTY 使用 CMD）
       if (!process.env.CLAUDE_CODE_GIT_BASH_PATH) {
         const gitBashPath = 'D:\\Git\\bin\\bash.exe';
-        if (require('fs').existsSync(gitBashPath)) {
+        if (fs.existsSync(gitBashPath)) {
           process.env.CLAUDE_CODE_GIT_BASH_PATH = gitBashPath;
           this.writeLog(logFile, `[PTY] 设置 Git Bash 路径: ${gitBashPath}`);
         }

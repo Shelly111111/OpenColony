@@ -8,9 +8,9 @@ import {
   MainTask,
   ArbitrationResult,
   ArbitrationMode,
-  SchedulerConfig
+  SchedulerConfig,
+  WorkerOutputSchema
 } from './types';
-import { WorkerOutputSchema } from './types';
 
 export class ArbitrationEngine {
   private config: SchedulerConfig;

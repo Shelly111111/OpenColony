@@ -4,6 +4,8 @@
  */
 
 import { v4 as uuidv4 } from "uuid";
+import * as path from "path";
+import * as fs from "fs";
 import {
   MainTask,
   TaskStatus,
@@ -57,7 +59,7 @@ export class MasterScheduler {
     const startTime = Date.now();
 
     // 检查LLM状态
-    const llm = getLLMClient();
+    getLLMClient(); // 确保LLM客户端已初始化
     console.log('[Master] 使用真实LLM模式');
 
     try {
@@ -68,16 +70,16 @@ export class MasterScheduler {
       // 创建分层日志目录
       const timeStr = new Date().toISOString().replace(/[:.]/g, "-").substring(0, 19);
       const folderName = `${traceId}_${timeStr}`;
-      const logRoot = require('path').resolve(__dirname, '../worker-logs');
-      const logDir = require('path').join(logRoot, folderName);
+      const logRoot = path.resolve(__dirname, '../worker-logs');
+      const logDir = path.join(logRoot, folderName);
 
-      if (!require('fs').existsSync(logDir)) {
-        require('fs').mkdirSync(logDir, { recursive: true });
+      if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir, { recursive: true });
       }
       task.logDir = logDir;
 
       // 创建统一的Master日志文件（Master + PlanExecutor 共用）
-      const masterLogFile = require('path').join(logDir, `Master_${traceId}.log`);
+      const masterLogFile = path.join(logDir, `Master_${traceId}.log`);
       task.masterLogFile = masterLogFile;
 
       this.writeMasterLog(masterLogFile, `[Master] 已创建任务 ${task.id}，TraceID: ${traceId}`);
@@ -295,7 +297,6 @@ ${outputStr}
    * 写入Master日志
    */
   private writeMasterLog(logFile: string, message: string): void {
-    const fs = require('fs');
     const timestamp = new Date().toISOString();
     const logLine = `[${timestamp}] ${message}\n`;
     fs.appendFileSync(logFile, logLine, 'utf-8');

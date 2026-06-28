@@ -25,3 +25,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
+output.json
+scheduler/PROJECT_SUMMARY.md
+scheduler/README.md

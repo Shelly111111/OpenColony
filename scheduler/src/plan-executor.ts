@@ -4,6 +4,7 @@
  */
 
 import { v4 as uuidv4 } from "uuid";
+import * as fs from "fs";
 import PQueue from "p-queue";
 import {
   MainTask,
@@ -38,7 +39,6 @@ export class PlanExecutor {
   private writePlanLog(masterLogFile: string | undefined, message: string): void {
     if (!masterLogFile) return;
 
-    const fs = require('fs');
     const logLine = `[${new Date().toISOString()}] ${message}\n`;
     fs.appendFileSync(masterLogFile, logLine, 'utf-8');
   }
