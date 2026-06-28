@@ -23,8 +23,8 @@ export class RoleManager {
   private roles: Map<string, RoleConfig> = new Map();
 
   constructor(configPath?: string) {
-    // 默认配置文件路径：scheduler/role.json
-    this.configPath = configPath || path.join(__dirname, '../role.json');
+    // 默认配置文件路径：scheduler/config/role.json
+    this.configPath = configPath || path.join(__dirname, '../config/role.json');
     this.loadRoles();
   }
 
