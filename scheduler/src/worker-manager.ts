@@ -122,10 +122,8 @@ export class WorkerManager {
 
       await manager.initialize();
 
-      // 准备命令：提取核心prompt（去掉多余的任务描述格式）
-      const rawCommand = this.extractCommand(subTask.command);
       // 格式化命令以适应PTY输入（将多行转换为单行）
-      const command = this.formatCommandForPty(rawCommand);
+      const command = this.formatCommandForPty(subTask.command);
       this.writeLog(logFile, `[PTY] 执行命令: ${command.substring(0, 200)}...`);
 
       // 执行命令（参照 main.ts 的 runAll 模式）
@@ -172,88 +170,6 @@ export class WorkerManager {
     }
   }
 
-  /**
-   * 从子任务的command中提取核心prompt
-   * 去掉格式标记，但保留任务名称和描述等关键内容
-   * 格式：任务名称 + 描述 + 原任务（原始需求）+ 注意（执行要求）
-   */
-  private extractCommand(fullCommand: string): string {
-    // 如果包含 "请执行以下任务"，则提取后面的内容
-    const match = fullCommand.match(/请执行以下任务：([\s\S]*)/);
-    if (!match) {
-      return fullCommand;
-    }
-
-    const content = match[1];
-
-    // 提取关键字段：- 任务名称：xxx 和 - 任务描述：xxx
-    const nameMatch = content.match(/- 任务名称：(.+)/);
-    const descMatch = content.match(/- 任务描述：(.+)/);
-
-    // 按行解析，识别不同部分
-    const lines = content.split('\n');
-    let currentSection: 'header' | 'request' | 'execution' = 'header';
-    const originalRequestLines: string[] = [];
-    const executionLines: string[] = [];
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-
-      // 识别节标题
-      if (trimmed.startsWith('##')) {
-        if (trimmed.includes('原始需求')) {
-          currentSection = 'request';
-          continue;
-        } else if (trimmed.includes('执行要求')) {
-          currentSection = 'execution';
-          continue;
-        }
-        continue;
-      }
-
-      // 跳过已提取的字段
-      if (trimmed.startsWith('- 任务名称：') || trimmed.startsWith('- 任务描述：')) {
-        continue;
-      }
-
-      // 根据当前节收集内容
-      if (currentSection === 'request' && trimmed) {
-        originalRequestLines.push(trimmed);
-      } else if (currentSection === 'execution' && trimmed && !trimmed.includes('请开始执行任务')) {
-        executionLines.push(trimmed);
-      }
-    }
-
-    const originalRequest = originalRequestLines.join('\n');
-    const executionRequirements = executionLines.join('\n');
-
-    // 重新组装
-    const parts: string[] = [];
-
-    // 1. 任务名称和描述
-    if (nameMatch) {
-      parts.push(`任务：${nameMatch[1].trim()}`);
-    }
-    if (descMatch) {
-      parts.push(`描述：${descMatch[1].trim()}`);
-    }
-
-    // 2. 原始需求（标注为"原始需求："）
-    if (originalRequest) {
-      parts.push(`\n原始需求：${originalRequest}`);
-    }
-
-    // 3. 执行要求（标注为"注意："）
-    if (executionRequirements) {
-      parts.push(`\n执行要求：${executionRequirements}`);
-    }
-
-    // 4. 执行提示
-    parts.push(`\n请开始执行任务。`);
-
-    const result = parts.join('\n');
-    return result || fullCommand;
-  }
 
   /**
    * 将多行命令转换为适合PTY输入的格式

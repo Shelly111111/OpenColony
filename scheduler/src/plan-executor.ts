@@ -309,28 +309,42 @@ ${roleDescriptions}
 
   /**
    * 为子任务构建执行命令
-   * 包含精简的用户需求
+   * 使用角色的 systemPrompt 作为开头，然后拼接任务信息和执行要求
    */
   private buildCommandForSubTask(llmSubTask: LLMPlanSubTask, parentTask: MainTask): string {
+    // 获取角色的 systemPrompt
+    const role = this.roleManager.getRole(llmSubTask.workerType);
+    const systemPrompt = role ? role.systemPrompt : '';
+
     // 精简用户需求：提取关键信息
     const condensedRequest = this.condenseUserRequest(parentTask.userRequest);
 
-    return `请执行以下任务：
+    // 构建命令：systemPrompt + 任务信息 + 原始需求 + 执行要求
+    const parts: string[] = [];
 
-## 任务信息
-- 任务名称：${llmSubTask.name}
-- 任务描述：${llmSubTask.description}
+    // 1. 角色的 systemPrompt
+    if (systemPrompt) {
+      parts.push(systemPrompt);
+    }
 
-## 原始需求（精简）
-${condensedRequest}
+    // 2. 任务信息
+    parts.push(`\n任务：${llmSubTask.name}`);
+    parts.push(`描述：${llmSubTask.description}`);
 
-## 执行要求
+    // 3. 原始需求
+    parts.push(`\n原始需求：${condensedRequest}`);
+
+    // 4. 执行要求
+    parts.push(`\n注意：
 1. 请基于实际情况来分析和执行任务
 2. 如果需要读取文件，请明确指定文件路径
 3. 你的输出必须具体且有针对性，不能给出通用建议
-4. 请给出完整的执行结果，包含具体的代码或方案
+4. 请给出完整的执行结果，包含具体的代码或方案`);
 
-请开始执行任务。`;
+    // 5. 执行提示
+    parts.push(`\n请开始执行任务。`);
+
+    return parts.join('\n');
   }
 
   /**
