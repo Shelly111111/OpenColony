@@ -9,7 +9,6 @@ import * as path from "path";
 import * as fs from "fs";
 import {
   WorkerInstance,
-  WorkerType,
   SubTask,
   WorkerOutput,
   SchedulerConfig
@@ -328,7 +327,7 @@ export class WorkerManager {
   /**
    * 创建Worker实例
    */
-  private async createWorker(workerType: WorkerType, logDir?: string): Promise<WorkerInstance> {
+  private async createWorker(workerType: string, logDir?: string): Promise<WorkerInstance> {
     // 查找空闲Worker
     for (const worker of this.workers.values()) {
       if (worker.status === "idle" && worker.type === workerType) {
@@ -384,7 +383,7 @@ export class WorkerManager {
         }
 
         // 检查是否是评审格式
-        if (parsed.passed !== undefined && worker.type === WorkerType.REVIEW) {
+        if (parsed.passed !== undefined && worker.type === 'review_agent') {
           return {
             status: "success",
             data: parsed,

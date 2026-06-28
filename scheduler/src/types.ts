@@ -42,17 +42,6 @@ export enum TaskPriority {
 }
 
 /**
- * Worker类型
- */
-export enum WorkerType {
-  CODE = "code_agent",
-  DATA = "data_agent",
-  VIZ = "viz_agent",
-  REVIEW = "review_agent",
-  GENERAL = "general_agent"
-}
-
-/**
  * 仲裁模式
  */
 export enum ArbitrationMode {
@@ -85,7 +74,7 @@ export interface SubTask {
   parentTaskId: string;
   name: string;
   description: string;
-  workerType: WorkerType;
+  workerType: string;
   priority: TaskPriority;
   status: TaskStatus;
   dependencies: string[]; // 依赖的子任务ID列表
@@ -147,7 +136,7 @@ export interface DAG {
  */
 export interface WorkerInstance {
   id: string;
-  type: WorkerType;
+  type: string;
   status: "idle" | "busy" | "error";
   sessionId?: number; // claude-multi-runner的会话ID
   ptySessionId?: number; // PTY会话ID（对应ClaudeUnifiedPtyManager的session.id）
@@ -178,7 +167,7 @@ export interface SchedulerConfig {
   defaultTimeoutMs: number;
   arbitrationMode: ArbitrationMode;
   enableReview: boolean;
-  workerTypes: WorkerType[];
+  workerTypes: string[];
 }
 
 /**

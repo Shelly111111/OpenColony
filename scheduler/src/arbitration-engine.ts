@@ -8,8 +8,7 @@ import {
   MainTask,
   ArbitrationResult,
   ArbitrationMode,
-  SchedulerConfig,
-  WorkerType
+  SchedulerConfig
 } from './types';
 import { WorkerOutputSchema } from './types';
 
@@ -92,24 +91,22 @@ export class ArbitrationEngine {
     console.log(`[ArbitrationEngine] 使用Agent优先级仲裁`);
 
     // 定义Agent优先级（数值越大优先级越高）
-    const agentPriority: Record<WorkerType, number> = {
-      [WorkerType.REVIEW]: 10,  // 评审Agent最高优先级
-      [WorkerType.CODE]: 8,
-      [WorkerType.DATA]: 7,
-      [WorkerType.VIZ]: 6,
-      [WorkerType.GENERAL]: 5
+    const agentPriority: Record<string, number> = {
+      'review_agent': 10,  // 评审Agent最高优先级
+      'code_agent': 8,
+      'general_agent': 5
     };
 
     // 按Agent优先级排序
     const sortedOutputs = [...outputs].sort((a, b) => {
-      const priorityA = agentPriority[a.source_agent as WorkerType] || 0;
-      const priorityB = agentPriority[b.source_agent as WorkerType] || 0;
+      const priorityA = agentPriority[a.source_agent] || 0;
+      const priorityB = agentPriority[b.source_agent] || 0;
       return priorityB - priorityA;
     });
 
-    const highestPriority = agentPriority[sortedOutputs[0].source_agent as WorkerType] || 0;
+    const highestPriority = agentPriority[sortedOutputs[0].source_agent] || 0;
     const topOutputs = sortedOutputs.filter(o =>
-      (agentPriority[o.source_agent as WorkerType] || 0) === highestPriority
+      (agentPriority[o.source_agent] || 0) === highestPriority
     );
 
     if (topOutputs.length === 1) {
@@ -314,7 +311,7 @@ export class ArbitrationEngine {
   /**
    * 标准化输出格式
    */
-  normalizeOutput(output: any, sourceAgent: WorkerType, traceId: string): WorkerOutput {
+  normalizeOutput(output: any, sourceAgent: string, traceId: string): WorkerOutput {
     if (this.validateOutput(output)) {
       return output;
     }

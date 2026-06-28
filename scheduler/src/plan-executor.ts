@@ -12,7 +12,6 @@ import {
   DAGNode,
   PlanOutput,
   TaskStatus,
-  WorkerType,
   TaskPriority,
   WorkerOutput,
   SchedulerConfig,
@@ -21,13 +20,16 @@ import {
 } from "./types";
 import { WorkerManager } from "./worker-manager";
 import { getLLMClient } from "./llm-client";
+import { RoleManager } from "./role-manager";
 
 export class PlanExecutor {
   private config: SchedulerConfig;
   private executionQueues: Map<string, PQueue> = new Map();
+  private roleManager: RoleManager;
 
   constructor(config: SchedulerConfig) {
     this.config = config;
+    this.roleManager = new RoleManager();
   }
 
   /**
@@ -202,6 +204,9 @@ export class PlanExecutor {
 
     const llm = getLLMClient();
 
+    // 从 RoleManager 动态获取可用的 Agent 类型列表
+    const roleDescriptions = this.roleManager.getRoleDescriptions();
+
     const systemPrompt = `你是一个任务规划专家，负责将复杂的任务拆分为可执行的子任务。
 
 请根据用户的需求，将任务拆分为一系列子任务，在拆分时，率先考虑任务的复杂性，如果任务复杂度较低，建议拆分为较少的子任务，如果任务复杂度较高，建议考虑任务的依赖关系，每个子任务应该：
@@ -210,9 +215,7 @@ export class PlanExecutor {
 3. 定义正确的依赖关系
 
 可用的Agent类型：
-- general_agent：通用任务，可以做任何类型的任务
-- code_agent：代码实现、测试等编程相关任务
-- review_agent：评审、结果验证等
+${roleDescriptions}
 
 请返回JSON格式，格式如下：
 {
@@ -265,13 +268,14 @@ export class PlanExecutor {
       const subTaskId = uuidv4();
       indexToIdMap.set(i, subTaskId);
 
-      // 验证并转换workerType
-      let workerType: WorkerType;
-      if (Object.values(WorkerType).includes(llmSubTask.workerType as WorkerType)) {
-        workerType = llmSubTask.workerType as WorkerType;
+      // 验证 workerType：从RoleManager检查角色是否存在
+      const role = this.roleManager.getRole(llmSubTask.workerType);
+      let workerType: string;
+      if (role) {
+        workerType = llmSubTask.workerType;
       } else {
         console.warn(`[PlanExecutor] 未知的workerType: ${llmSubTask.workerType}，使用general_agent`);
-        workerType = WorkerType.GENERAL;
+        workerType = 'general_agent';
       }
 
       subTasks.push({
@@ -395,7 +399,7 @@ ${condensedRequest}
     parentTaskId: string,
     name: string,
     description: string,
-    workerType: WorkerType,
+    workerType: string,
     dependencies: string[]
   ): SubTask {
     return {

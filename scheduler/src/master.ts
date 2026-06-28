@@ -14,8 +14,7 @@ import {
   WorkerOutput,
   SchedulerConfig,
   WorkerOutputSchema,
-  ArbitrationMode,
-  WorkerType
+  ArbitrationMode
 } from "./types";
 import { PlanExecutor } from "./plan-executor";
 import { WorkerManager } from "./worker-manager";
@@ -36,7 +35,7 @@ export class MasterScheduler {
       defaultTimeoutMs: config.defaultTimeoutMs || 30 * 60 * 1000, // 30分钟
       arbitrationMode: config.arbitrationMode || ArbitrationMode.CONFIDENCE_VOTE,
       enableReview: config.enableReview !== undefined ? config.enableReview : true,
-      workerTypes: config.workerTypes || [WorkerType.GENERAL]
+      workerTypes: config.workerTypes || ['general_agent']
     };
 
     this.planExecutor = new PlanExecutor(this.config);

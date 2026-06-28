@@ -3,7 +3,7 @@
  */
 
 import { MasterScheduler } from "./master";
-import { TaskPriority, WorkerType, ArbitrationMode } from "./types";
+import { TaskPriority, ArbitrationMode } from "./types";
 
 // 导出所有公共类型和类
 export * from "./types";
@@ -133,7 +133,7 @@ async function runCommand(args: string[]) {
     maxWorkers: options.maxWorkers,
     arbitrationMode: options.arbitrationMode,
     enableReview: options.enableReview !== undefined ? options.enableReview : true,
-    workerTypes: [WorkerType.GENERAL, WorkerType.CODE, WorkerType.REVIEW]
+    workerTypes: ['general_agent', 'code_agent', 'review_agent']
   });
 
   try {
@@ -183,7 +183,7 @@ async function runTest() {
   const scheduler = new MasterScheduler({
     maxWorkers: 2,
     enableReview: false,
-    workerTypes: [WorkerType.GENERAL]
+    workerTypes: ['general_agent']
   });
 
   try {
