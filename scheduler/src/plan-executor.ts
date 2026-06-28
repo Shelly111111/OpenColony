@@ -246,8 +246,9 @@ export class PlanExecutor {
     });
 
     if (!response.success || !response.data) {
-      console.warn(`[PlanExecutor] LLM任务拆分失败，使用备用方案:`, response.error);
-      return this.getFallbackSubTasks(task);
+      throw new Error(
+        `[PlanExecutor] LLM任务拆分失败: ${response.error || '未知错误'}。请检查 ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN 配置以及 API 连通性。`
+      );
     }
 
     console.log(`[PlanExecutor] LLM任务拆分成功，获得 ${response.data.subTasks.length} 个子任务`);
@@ -342,64 +343,6 @@ ${condensedRequest}
     // 否则提取前300字符作为摘要，并添加提示
     const summary = fullRequest.substring(0, 300);
     return `${summary}...\n\n[需求摘要] 这是一个与OpenColony项目相关的任务，请结合项目实际情况执行。`;
-  }
-
-  /**
-   * 备用方案：硬编码的任务拆分
-   */
-  private getFallbackSubTasks(task: MainTask): SubTask[] {
-    console.log(`[PlanExecutor] 使用备用任务拆分方案`);
-
-    const subTasks: SubTask[] = [];
-
-    // 1. 需求分析任务
-    subTasks.push(this.createSubTask(
-      task.id,
-      '需求分析',
-      `分析用户需求：${task.userRequest}，明确目标、边界和约束条件`,
-      WorkerType.GENERAL,
-      []
-    ));
-
-    // 2. 方案设计任务
-    subTasks.push(this.createSubTask(
-      task.id,
-      '方案设计',
-      '根据需求分析结果，设计具体的实现方案和技术选型',
-      WorkerType.GENERAL,
-      [subTasks[0].id]
-    ));
-
-    // 3. 代码实现任务
-    subTasks.push(this.createSubTask(
-      task.id,
-      '代码实现',
-      '根据设计方案编写具体的实现代码',
-      WorkerType.CODE,
-      [subTasks[1].id]
-    ));
-
-    // 4. 测试验证任务
-    subTasks.push(this.createSubTask(
-      task.id,
-      '测试验证',
-      '对实现的代码进行测试，验证功能正确性和性能',
-      WorkerType.CODE,
-      [subTasks[2].id]
-    ));
-
-    // 如果启用评审，添加评审任务
-    if (this.config.enableReview) {
-      subTasks.push(this.createSubTask(
-        task.id,
-        '代码评审',
-        '评审实现的代码质量、安全性和可维护性',
-        WorkerType.REVIEW,
-        [subTasks[2].id]
-      ));
-    }
-
-    return subTasks;
   }
 
   /**

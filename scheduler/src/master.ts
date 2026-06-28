@@ -59,11 +59,7 @@ export class MasterScheduler {
 
     // 检查LLM状态
     const llm = getLLMClient();
-    if (!llm.isRealLLM()) {
-      console.warn('[Master] 警告：未设置ANTHROPIC_API_KEY，将使用模拟模式');
-    } else {
-      console.log('[Master] 使用真实LLM模式');
-    }
+    console.log('[Master] 使用真实LLM模式');
 
     try {
       // 1. 解析用户需求，提取约束和交付标准

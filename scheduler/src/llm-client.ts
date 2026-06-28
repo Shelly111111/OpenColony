@@ -28,7 +28,6 @@ export interface LLMResponse {
 export class LLMClient {
   private client: Anthropic;
   private model: string;
-  private fallbackMode: boolean = false;
 
   constructor() {
     const apiKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN;
@@ -37,17 +36,17 @@ export class LLMClient {
                  'claude-3-5-sonnet-20241022';
 
     if (!apiKey) {
-      console.warn('[LLMClient] API Key未设置，将使用模拟模式');
-      this.fallbackMode = true;
-      this.client = new Anthropic({ apiKey: 'dummy_key' });
-    } else {
-      console.log(`[LLMClient] 使用API端点: ${baseURL || '默认Anthropic API'}`);
-      console.log(`[LLMClient] 使用模型: ${this.model}`);
-      this.client = new Anthropic({
-        apiKey,
-        baseURL: baseURL || undefined
-      });
+      throw new Error(
+        '[LLMClient] 未设置 ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN，请检查 .env 文件'
+      );
     }
+
+    console.log(`[LLMClient] 使用API端点: ${baseURL || '默认Anthropic API'}`);
+    console.log(`[LLMClient] 使用模型: ${this.model}`);
+    this.client = new Anthropic({
+      apiKey,
+      baseURL: baseURL || undefined
+    });
   }
 
   /**
@@ -66,10 +65,6 @@ export class LLMClient {
       maxTokens = 4096,
       temperature = 0.7
     } = options || {};
-
-    if (this.fallbackMode) {
-      return this.getFallbackResponse(messages, systemPrompt);
-    }
 
     try {
       console.log(`[LLMClient] 调用LLM，模型: ${this.model}`);
@@ -160,66 +155,6 @@ export class LLMClient {
         error: `JSON解析失败: ${error instanceof Error ? error.message : String(error)}`
       };
     }
-  }
-
-  /**
-   * 模拟响应（当没有API Key时使用）
-   */
-  private getFallbackResponse(messages: LLMMessage[], systemPrompt: string): LLMResponse {
-    console.log('[LLMClient] 使用模拟模式响应');
-
-    const lastUserMessage = [...messages].reverse().find(m => m.role === 'user')?.content || '';
-
-    // 根据消息内容返回合理的模拟响应
-    if (lastUserMessage.includes('任务拆分') || lastUserMessage.includes('拆分任务')) {
-      return {
-        success: true,
-        content: JSON.stringify({
-          subTasks: [
-            {
-              name: '需求分析',
-              description: '分析用户需求，明确目标和边界',
-              workerType: 'general_agent',
-              dependencies: []
-            },
-            {
-              name: '方案设计',
-              description: '根据需求设计实现方案',
-              workerType: 'general_agent',
-              dependencies: [0]
-            },
-            {
-              name: '代码实现',
-              description: '根据方案编写代码',
-              workerType: 'code_agent',
-              dependencies: [1]
-            }
-          ]
-        }, null, 2)
-      };
-    }
-
-    if (lastUserMessage.includes('评审') || lastUserMessage.includes('review')) {
-      return {
-        success: true,
-        content: JSON.stringify({
-          passed: true,
-          feedback: '模拟评审通过，结果看起来合理'
-        }, null, 2)
-      };
-    }
-
-    return {
-      success: true,
-      content: `这是一个模拟响应。用户请求: ${lastUserMessage.substring(0, 100)}...\n\n注意：请设置ANTHROPIC_API_KEY环境变量以使用真实的LLM功能。`
-    };
-  }
-
-  /**
-   * 检查是否使用真实LLM
-   */
-  isRealLLM(): boolean {
-    return !this.fallbackMode;
   }
 }
 
