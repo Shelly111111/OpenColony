@@ -176,47 +176,84 @@ export class WorkerManager {
   /**
    * 从子任务的command中提取核心prompt
    * 去掉格式标记，但保留任务名称和描述等关键内容
+   * 格式：任务名称 + 描述 + 原任务（原始需求）+ 注意（执行要求）
    */
   private extractCommand(fullCommand: string): string {
     // 如果包含 "请执行以下任务"，则提取后面的内容
     const match = fullCommand.match(/请执行以下任务：([\s\S]*)/);
-    if (match) {
-      const content = match[1];
-
-      // 提取关键字段：- 任务名称：xxx 和 - 任务描述：xxx
-      const nameMatch = content.match(/- 任务名称：(.+)/);
-      const descMatch = content.match(/- 任务描述：(.+)/);
-
-      // 提取原始需求（去掉 ## 开头的标题行）
-      const originalRequestLines = content.split('\n')
-        .filter(line => {
-          const trimmed = line.trim();
-          // 去掉标题行
-          if (trimmed.startsWith('##')) return false;
-          // 去掉任务信息标题下的字段名行（已单独提取）
-          if (trimmed.startsWith('- 任务名称：')) return false;
-          if (trimmed.startsWith('- 任务描述：')) return false;
-          return true;
-        })
-        .join('\n')
-        .trim();
-
-      // 重新组装：任务名称 + 任务描述 + 原始需求
-      const parts: string[] = [];
-      if (nameMatch) {
-        parts.push(`任务：${nameMatch[1].trim()}`);
-      }
-      if (descMatch) {
-        parts.push(`描述：${descMatch[1].trim()}`);
-      }
-      if (originalRequestLines) {
-        parts.push(originalRequestLines);
-      }
-
-      const result = parts.join('\n\n');
-      return result || fullCommand;
+    if (!match) {
+      return fullCommand;
     }
-    return fullCommand;
+
+    const content = match[1];
+
+    // 提取关键字段：- 任务名称：xxx 和 - 任务描述：xxx
+    const nameMatch = content.match(/- 任务名称：(.+)/);
+    const descMatch = content.match(/- 任务描述：(.+)/);
+
+    // 按行解析，识别不同部分
+    const lines = content.split('\n');
+    let currentSection: 'header' | 'request' | 'execution' = 'header';
+    const originalRequestLines: string[] = [];
+    const executionLines: string[] = [];
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // 识别节标题
+      if (trimmed.startsWith('##')) {
+        if (trimmed.includes('原始需求')) {
+          currentSection = 'request';
+          continue;
+        } else if (trimmed.includes('执行要求')) {
+          currentSection = 'execution';
+          continue;
+        }
+        continue;
+      }
+
+      // 跳过已提取的字段
+      if (trimmed.startsWith('- 任务名称：') || trimmed.startsWith('- 任务描述：')) {
+        continue;
+      }
+
+      // 根据当前节收集内容
+      if (currentSection === 'request' && trimmed) {
+        originalRequestLines.push(trimmed);
+      } else if (currentSection === 'execution' && trimmed && !trimmed.includes('请开始执行任务')) {
+        executionLines.push(trimmed);
+      }
+    }
+
+    const originalRequest = originalRequestLines.join('\n');
+    const executionRequirements = executionLines.join('\n');
+
+    // 重新组装
+    const parts: string[] = [];
+
+    // 1. 任务名称和描述
+    if (nameMatch) {
+      parts.push(`任务：${nameMatch[1].trim()}`);
+    }
+    if (descMatch) {
+      parts.push(`描述：${descMatch[1].trim()}`);
+    }
+
+    // 2. 原始需求（标注为"原始需求："）
+    if (originalRequest) {
+      parts.push(`\n原始需求：${originalRequest}`);
+    }
+
+    // 3. 执行要求（标注为"注意："）
+    if (executionRequirements) {
+      parts.push(`\n执行要求：${executionRequirements}`);
+    }
+
+    // 4. 执行提示
+    parts.push(`\n请开始执行任务。`);
+
+    const result = parts.join('\n');
+    return result || fullCommand;
   }
 
   /**
