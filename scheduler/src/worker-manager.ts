@@ -1,7 +1,7 @@
 /**
  * Worker集群管理层
- * 使用ClaudeUnifiedPtyManager管理PTY会话，实现多harness调用
- * 参照 main.ts 的方案：每个任务创建独立的Manager实例
+ * 使用 ClaudeUnifiedPtyManager 管理任务执行，支持 SDK 和 PTY 两种模式
+ * 参照 main.ts 的方案：每个任务创建独立的 Manager 实例
  */
 
 import { v4 as uuidv4 } from "uuid";
@@ -166,21 +166,6 @@ export class WorkerManager {
       };
     }
   }
-
-  /**
-   * 使用PTY Claude CLI执行任务
-   * 现在委托给 runTaskWithManager 方法
-   */
-  private async runTaskWithPty(
-    worker: WorkerInstance,
-    subTask: SubTask,
-    traceId: string,
-    logFile: string
-  ): Promise<WorkerOutput> {
-    // 委托给统一的方法，使用 pty 模式
-    return this.runTaskWithManager(worker, subTask, traceId, logFile, 'pty');
-  }
-
 
   /**
    * 将多行命令转换为适合PTY输入的格式
