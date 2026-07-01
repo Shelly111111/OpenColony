@@ -19,11 +19,11 @@ npm install
 
 ### 2. 配置环境变量
 
-调度中心需要配置 API Key：
+在项目根目录创建 `.env` 文件：
 
 ```bash
 # 复制示例配置
-cp scheduler/.env.example scheduler/.env
+cp scheduler/.env.example .env
 
 # 编辑 .env 文件，添加你的 ANTHROPIC_API_KEY
 ```
@@ -39,8 +39,11 @@ npm start
 # 启动调度中心执行任务
 npm start run "分析当前目录结构"
 
-# 直接调用 Claude PTY
-npm start claude 1 "查看当前目录"
+# 直接调用 Claude（默认 SDK 模式）
+npm start -- claude 1 "查看当前目录"
+
+# 使用 PTY 模式
+npm start -- claude pty 1 "查看当前目录"
 ```
 
 #### 使用独立脚本
@@ -49,7 +52,7 @@ npm start claude 1 "查看当前目录"
 # 启动调度中心
 npm run scheduler
 
-# 启动 Claude PTY 管理器
+# 启动 Claude 管理器（SDK 模式默认）
 npm run claude
 ```
 
@@ -70,9 +73,10 @@ OpenColony/
 │   │   ├── task-queue.ts         # 任务队列
 │   │   └── types.ts              # 类型定义
 │   └── .env                      # 环境变量配置
-├── claude-multi-runner/          # Claude PTY 管理器
-│   ├── main.ts                   # PTY 管理器入口
-│   ├── manager.ts                # 终端管理器
+├── claude-multi-runner/          # Claude 管理器（支持 SDK 和 PTY 模式）
+│   ├── main.ts                   # 主入口（支持模式切换）
+│   ├── manager.ts                # 统一管理器
+│   ├── sdk-client.ts            # SDK 客户端
 │   ├── virtual-screen.ts         # 虚拟屏幕
 │   ├── types.ts                  # 类型定义
 │   ├── backends/                 # PTY 后端
@@ -89,16 +93,32 @@ OpenColony/
 |------|------|
 | `npm start` | 显示帮助信息 |
 | `npm start run <需求>` | 启动调度中心执行任务 |
-| `npm start claude <参数>` | 直接调用 Claude PTY |
+| `npm start claude [sdk\|pty] <参数>` | 直接调用 Claude（支持 SDK/PTY 模式） |
 | `npm run run` | 等同于 `npm start run` |
 | `npm run scheduler` | 直接启动调度中心 |
-| `npm run claude` | 直接启动 Claude PTY 管理器 |
+| `npm run claude` | 直接启动 Claude 管理器（默认 SDK 模式） |
 | `npm run build` | 编译 TypeScript |
 | `npm run dev` | 开发模式（需要安装 ts-node-dev） |
 
 ## 核心功能
 
-### 1. PTY 管理器 (claude-multi-runner)
+### 1. Claude 管理器 (claude-multi-runner)
+
+支持两种运行模式：
+
+**SDK 模式（默认）**：
+- 使用 Claude Agent SDK 直接调用 API
+- 无需安装 Claude CLI
+- 响应更快，适合自动化场景
+
+**PTY 模式**：
+- 使用 node-pty 创建真实终端
+- 支持多终端并行执行
+- 实时日志记录
+- 虚拟屏幕捕获输出
+- 完整的交互式体验（颜色、进度条等）
+
+### 2. 调度中心 (scheduler)
 
 - 使用 node-pty 创建真实终端
 - 支持多终端并行执行

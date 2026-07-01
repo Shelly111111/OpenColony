@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Skill(claude-api)",
+      "Bash(node -e \"try { const { query } = require\\(''@anthropic-ai/claude-agent-sdk''\\); console.log\\(''✓ Agent SDK 导入成功''\\); } catch\\(e\\) { console.log\\(''✗ 导入失败:'', e.message\\); }\")",
+      "Bash(timeout 10 npx ts-node -e \":*)",
+      "Bash(timeout 30 npx ts-node main.ts 1 \"测试 Agent SDK\" --mode=sdk)",
+      "Bash(git checkout:*)",
+      "Read(//d/OpenColony/**)",
+      "Bash(npm start:*)",
+      "Bash(cat /d/OpenColony/claude-logs/claude-session-1-*.log)"
+    ]
+  }
+}

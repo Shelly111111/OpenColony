@@ -1,13 +1,18 @@
 /**
- * Claude PTY Manager
+ * Claude Unified Manager
+ * 支持两种模式: SDK (Agent SDK) 和 PTY (node-pty)
  */
+
+// 运行模式类型
+export type ClaudeRunMode = 'sdk' | 'pty';
 
 import * as fs from "fs";
 import * as path from "path";
 import { PtyBackend, ClaudeSession } from "./types";
 import { createPtyBackend } from "./backends/pty-selector";
 import { ensureLogDir, createLogFile, writeToLog, LOG_DIR } from "./utils/logger";
-import { findGitBashPath, getDefaultShell } from "./utils/git-bash";
+import { getDefaultShell } from "./utils/git-bash";
+import { ClaudeSDKClient, getSDKClient } from "./sdk-client";
 
 // 屏幕日志文件后缀
 const SCREEN_LOG_SUFFIX = ".screen.log";
@@ -50,10 +55,17 @@ export class ClaudeUnifiedPtyManager {
   private activeCount: number = 0;
   private maxSessions: number;
   private backendType: string = "";
+  private mode: ClaudeRunMode;
+  private sdkClient: ClaudeSDKClient | null = null;
 
-  constructor(maxSessions: number) {
+  constructor(maxSessions: number, mode: ClaudeRunMode = 'pty') {
     this.maxSessions = maxSessions;
+    this.mode = mode;
     ensureLogDir();
+
+    if (mode === 'sdk') {
+      this.sdkClient = getSDKClient();
+    }
   }
 
   /**
@@ -99,165 +111,189 @@ export class ClaudeUnifiedPtyManager {
   }
 
   async initialize(): Promise<void> {
-    this.backend = await createPtyBackend();
-    if (!this.backend) {
-      throw new Error("无法创建 PTY 后端。请确保 node-pty 已正确安装");
-    }
-    this.backendType = this.backend.type;
-
-    // 设置回调
-    this.backend.onData = (terminalId: string, data: string) => {
-      const session = this.sessions.find(s => s.terminalId === terminalId);
-      if (session) {
-        session.outputBuffer = data; // 只保留最新的屏幕内容
-
-        // 清空 screen.log 文件并写入最新的屏幕内容（终端不再打印完整屏幕）
-        if (session.screenLogFile) {
-          const timestamp = new Date().toISOString();
-          const fullContent = `[${timestamp}] 屏幕内容:\n${data}\n`;
-          fs.writeFileSync(session.screenLogFile, fullContent, 'utf-8');
-        }
+    if (this.mode === 'pty') {
+      this.backend = await createPtyBackend();
+      if (!this.backend) {
+        throw new Error("无法创建 PTY 后端。请确保 node-pty 已正确安装");
       }
-    };
+      this.backendType = this.backend.type;
 
-    // diff 回调 - 将变化的行追加到主日志文件，并输出到终端
-    this.backend.onDiff = (terminalId: string, changedLines: { row: number; content: string }[]) => {
-      const session = this.sessions.find(s => s.terminalId === terminalId);
-      if (session && changedLines.length > 0) {
-        // 过滤无意义的行：空行、状态动画、状态栏等
-        // 同时预先清理 ANSI 码，避免重复调用 stripAnsi
-        const meaningfulLines = changedLines
-          .map(line => ({ ...line, cleanContent: this.stripAnsi(line.content) }))
-          .filter(line => !this.isNoiseLine(line.cleanContent));
+      // 设置回调
+      this.backend.onData = (terminalId: string, data: string) => {
+        const session = this.sessions.find(s => s.terminalId === terminalId);
+        if (session) {
+          session.outputBuffer = data; // 只保留最新的屏幕内容
 
-        if (meaningfulLines.length > 0) {
-          const timestamp = new Date().toISOString();
-          const diffContent = `[${timestamp}] ` +
-            meaningfulLines.map(line => `  ${line.cleanContent}`).join('\n') + '\n';
-          fs.appendFileSync(session.logFile, diffContent, 'utf-8');
-
-          // 终端输出变化的行
-          const color = COLORS[(session.id - 1) % COLORS.length];
-          const prefix = `[终端${session.id}]`;
-          for (const line of meaningfulLines) {
-            process.stdout.write(`${color}${prefix}${RESET} ${line.cleanContent}\n`);
+          // 清空 screen.log 文件并写入最新的屏幕内容（终端不再打印完整屏幕）
+          if (session.screenLogFile) {
+            const timestamp = new Date().toISOString();
+            const fullContent = `[${timestamp}] 屏幕内容:\n${data}\n`;
+            fs.writeFileSync(session.screenLogFile, fullContent, 'utf-8');
           }
         }
-      }
-    };
+      };
 
-    this.backend.onExit = (terminalId: string, code: number) => {
-      const session = this.sessions.find(s => s.terminalId === terminalId);
-      if (session) {
-        if (session.status !== "running") {
-          writeToLog(session.logFile, `[INFO] 进程退出 (退出码: ${code})，会话已终止`);
-          return;
+      // diff 回调 - 将变化的行追加到主日志文件，并输出到终端
+      this.backend.onDiff = (terminalId: string, changedLines: { row: number; content: string }[]) => {
+        const session = this.sessions.find(s => s.terminalId === terminalId);
+        if (session && changedLines.length > 0) {
+          // 过滤无意义的行：空行、状态动画、状态栏等
+          // 同时预先清理 ANSI 码，避免重复调用 stripAnsi
+          const meaningfulLines = changedLines
+            .map(line => ({ ...line, cleanContent: this.stripAnsi(line.content) }))
+            .filter(line => !this.isNoiseLine(line.cleanContent));
+
+          if (meaningfulLines.length > 0) {
+            const timestamp = new Date().toISOString();
+            const diffContent = `[${timestamp}] ` +
+              meaningfulLines.map(line => `  ${line.cleanContent}`).join('\n') + '\n';
+            fs.appendFileSync(session.logFile, diffContent, 'utf-8');
+
+            // 终端输出变化的行
+            const color = COLORS[(session.id - 1) % COLORS.length];
+            const prefix = `[终端${session.id}]`;
+            for (const line of meaningfulLines) {
+              process.stdout.write(`${color}${prefix}${RESET} ${line.cleanContent}\n`);
+            }
+          }
         }
+      };
 
-        session.status = code === 0 ? "completed" : "error";
-        writeToLog(session.logFile, `进程结束，退出码: ${code}`);
-        console.log(formatOutput(session.id, `终端结束 (退出码: ${code}) - 状态: ${session.status}`));
-        this.activeCount--;
+      this.backend.onExit = (terminalId: string, code: number) => {
+        const session = this.sessions.find(s => s.terminalId === terminalId);
+        if (session) {
+          if (session.status !== "running") {
+            writeToLog(session.logFile, `[INFO] 进程退出 (退出码: ${code})，会话已终止`);
+            return;
+          }
 
-        const endTime = new Date();
-        const duration = (endTime.getTime() - session.startTime.getTime()) / 1000;
-        writeToLog(
-          session.logFile,
-          `=== 会话汇总 ===\n开始时间: ${session.startTime.toISOString()}\n结束时间: ${endTime.toISOString()}\n运行时长: ${duration}秒\n命令: ${session.command}\n状态: ${session.status}`
-        );
-      }
-    };
+          session.status = code === 0 ? "completed" : "error";
+          writeToLog(session.logFile, `进程结束，退出码: ${code}`);
+          console.log(formatOutput(session.id, `终端结束 (退出码: ${code}) - 状态: ${session.status}`));
+          this.activeCount--;
 
-    this.backend.onError = (terminalId: string, message: string) => {
-      const session = this.sessions.find(s => s.terminalId === terminalId);
-      if (session) {
-        writeToLog(session.logFile, `[ERROR] ${message}`);
-        console.log(formatOutput(session.id, `[错误] ${message}`));
-      }
-    };
+          const endTime = new Date();
+          const duration = (endTime.getTime() - session.startTime.getTime()) / 1000;
+          writeToLog(
+            session.logFile,
+            `=== 会话汇总 ===\n开始时间: ${session.startTime.toISOString()}\n结束时间: ${endTime.toISOString()}\n运行时长: ${duration}秒\n命令: ${session.command}\n状态: ${session.status}`
+          );
+        }
+      };
 
-    console.log(`[pty] 使用 PTY 后端: ${this.backendType}`);
+      this.backend.onError = (terminalId: string, message: string) => {
+        const session = this.sessions.find(s => s.terminalId === terminalId);
+        if (session) {
+          writeToLog(session.logFile, `[ERROR] ${message}`);
+          console.log(formatOutput(session.id, `[错误] ${message}`));
+        }
+      };
+
+      console.log(`[pty] 使用 PTY 后端: ${this.backendType}`);
+    } else {
+      console.log(`[sdk] 使用 SDK 模式`);
+    }
   }
 
   async spawnClaude(sessionId: number, command: string): Promise<void> {
-    if (!this.backend) {
-      throw new Error("PTY 后端未初始化");
-    }
-
-    const terminalId = `claude-${sessionId}-${Date.now()}`;
     const baseLogFile = createLogFile(sessionId);
-    const screenLogFile = baseLogFile.replace('.log', SCREEN_LOG_SUFFIX);
     const session: ClaudeSession = {
       id: sessionId,
-      terminalId,
+      terminalId: `claude-${sessionId}-${Date.now()}`,
       command,
       logFile: baseLogFile,
-      screenLogFile,
       startTime: new Date(),
       status: "running",
       outputBuffer: "",
     };
 
-    this.sessions.push(session);
-
-    writeToLog(session.logFile, `启动 Claude 终端 ${sessionId} (PTY: ${this.backendType})`);
-    writeToLog(session.logFile, `执行命令: ${command}`);
-    console.log(formatOutput(sessionId, `启动终端，准备执行: "${command}" (${this.backendType})`));
-
-    const shellPath = getDefaultShell();
-    writeToLog(session.logFile, `使用 Shell: ${shellPath}`);
-
-    await this.backend.spawn(terminalId, {
-      shell: shellPath,
-      cols: 120,
-      rows: 40,
-      env: {
-        CLAUDE_SESSION_ID: String(sessionId),
-      },
-    });
-
-    this.activeCount++;
-
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    writeToLog(session.logFile, `发送 'claude --dangerously-skip-permissions' 命令启动 Claude CLI`);
-
-    // 构建 Stop hook 配置
-    // Windows 路径需要转换为正斜杠，避免 JSON 转义问题
-    const hookScriptPath = path.join(process.cwd(), "claude-multi-runner/hooks", "completion-marker.sh").replace(/\\/g, "/");
-    const settingsJson = JSON.stringify({
-      hooks: {
-        Stop: [
-          {
-            matcher: "",
-            hooks: [
-              {
-                type: "command",
-                command: hookScriptPath
-              }
-            ]
-          }
-        ]
-      }
-    });
-
-    // 使用 --settings 参数传递 Stop hook 配置
-    // 在 bash 中使用单引号包裹 JSON
-    const claudeCmd = `claude --dangerously-skip-permissions --settings '${settingsJson}'`;
-    writeToLog(session.logFile, `启动命令: ${claudeCmd}`);
-    this.backend.write(terminalId, claudeCmd + "\r");
-
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const claudeReady = await this.waitForClaudeReady(session, 30000);
-
-    if (!claudeReady) {
-      writeToLog(session.logFile, `[WARN] Claude 启动超时，额外等待 2 秒后发送命令`);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+    // 只在 PTY 模式下创建屏幕日志文件
+    if (this.mode === 'pty') {
+      session.screenLogFile = baseLogFile.replace('.log', SCREEN_LOG_SUFFIX);
     }
 
-    writeToLog(session.logFile, `发送用户命令到 Claude: "${command}"`);
-    // 对于长命令，使用分块发送以避免 PTY 缓冲区限制
-    await this.sendCommandInChunks(terminalId, command, session.logFile);
+    this.sessions.push(session);
+
+    if (this.mode === 'sdk') {
+      // SDK 模式
+      writeToLog(session.logFile, `启动 Claude SDK 会话 ${sessionId}`);
+      writeToLog(session.logFile, `执行命令: ${command}`);
+      console.log(formatOutput(sessionId, `启动 SDK 会话，准备执行: "${command}"`));
+
+      this.activeCount++;
+
+      try {
+        await this.sdkClient!.executeCommand(command, sessionId, session.logFile);
+        session.status = "completed";
+        this.activeCount--;
+        console.log(formatOutput(sessionId, `SDK 执行完成`));
+      } catch (error) {
+        session.status = "error";
+        this.activeCount--;
+        console.log(formatOutput(sessionId, `SDK 执行失败: ${error}`));
+      }
+    } else {
+      // PTY 模式
+      if (!this.backend) {
+        throw new Error("PTY 后端未初始化");
+      }
+
+      writeToLog(session.logFile, `启动 Claude 终端 ${sessionId} (PTY: ${this.backendType})`);
+      writeToLog(session.logFile, `执行命令: ${command}`);
+      console.log(formatOutput(sessionId, `启动终端，准备执行: "${command}" (${this.backendType})`));
+
+      const shellPath = getDefaultShell();
+      writeToLog(session.logFile, `使用 Shell: ${shellPath}`);
+
+      await this.backend.spawn(session.terminalId, {
+        shell: shellPath,
+        cols: 120,
+        rows: 40,
+        env: {
+          CLAUDE_SESSION_ID: String(sessionId),
+          // PTY 模式下不传递 ANTHROPIC_API_KEY，让 Claude CLI 使用自己的配置
+        },
+      });
+
+      this.activeCount++;
+
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      writeToLog(session.logFile, `发送 'claude --dangerously-skip-permissions' 命令启动 Claude CLI`);
+
+      // 构建 Stop hook 配置
+      const hookScriptPath = path.join(process.cwd(), "claude-multi-runner/hooks", "completion-marker.sh").replace(/\\/g, "/");
+      const settingsJson = JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              matcher: "",
+              hooks: [
+                {
+                  type: "command",
+                  command: hookScriptPath
+                }
+              ]
+            }
+          ]
+        }
+      });
+
+      const claudeCmd = `claude --dangerously-skip-permissions --settings '${settingsJson}'`;
+      writeToLog(session.logFile, `启动命令: ${claudeCmd}`);
+      this.backend.write(session.terminalId, claudeCmd + "\r");
+
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const claudeReady = await this.waitForClaudeReady(session, 30000);
+
+      if (!claudeReady) {
+        writeToLog(session.logFile, `[WARN] Claude 启动超时，额外等待 2 秒后发送命令`);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+
+      writeToLog(session.logFile, `发送用户命令到 Claude: "${command}"`);
+      await this.sendCommandInChunks(session.terminalId, command, session.logFile);
+    }
   }
 
   /**
@@ -265,12 +301,12 @@ export class ClaudeUnifiedPtyManager {
    * 对于长命令，将其分成小块发送，每块之间添加延时
    */
   private async sendCommandInChunks(terminalId: string, command: string, logFile: string): Promise<void> {
-    const CHUNK_SIZE = 50; // 每块50个字符（一行的最大值）
-    const CHUNK_DELAY_MS = 20; // 每块之间的延时（毫秒）
-    const COMMAND_END_DELAY_MS = 200; // 发送完命令后的延时
+    const CHUNK_SIZE = 10; // 每块100个字符
+    const CHUNK_DELAY_MS = 10; // 每块之间的延时（毫秒）
+    const COMMAND_END_DELAY_MS = 100; // 发送完命令后的延时
 
     // 如果命令长度小于阈值，直接发送
-    if (command.length <= CHUNK_SIZE) {
+    if (command.length <= CHUNK_SIZE * 2) {
       writeToLog(logFile, `[INFO] 命令长度 ${command.length} 字符，直接发送`);
       this.backend!.write(terminalId, command + "\r");
       await new Promise(resolve => setTimeout(resolve, COMMAND_END_DELAY_MS));
@@ -360,7 +396,8 @@ export class ClaudeUnifiedPtyManager {
 
     await Promise.all(spawnPromises);
 
-    console.log(`\x1b[36m=== 已启动 ${this.maxSessions} 个 Claude 终端 (${this.backendType}) ===\x1b[0m`);
+    const modeText = this.mode === 'sdk' ? 'SDK' : `PTY (${this.backendType})`;
+    console.log(`\x1b[36m=== 已启动 ${this.maxSessions} 个 Claude 终端 (${modeText}) ===\x1b[0m`);
     console.log(`日志目录: ${LOG_DIR}`);
 
     await this.waitForCompletion();
@@ -420,7 +457,7 @@ export class ClaudeUnifiedPtyManager {
   }
 
   killAll(): void {
-    if (this.backend) {
+    if (this.mode === 'pty' && this.backend) {
       for (const session of this.sessions) {
         if (session.status === "running") {
           writeToLog(session.logFile, "手动终止进程");
@@ -428,6 +465,8 @@ export class ClaudeUnifiedPtyManager {
         }
       }
       this.backend.shutdown();
+    } else if (this.mode === 'sdk') {
+      console.log(`[sdk] SDK 模式不支持手动终止`);
     }
   }
 }

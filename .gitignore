@@ -28,3 +28,7 @@ Thumbs.db
 output.json
 scheduler/PROJECT_SUMMARY.md
 scheduler/README.md
+
+# Windows system caches
+**/ProgramData/Microsoft/Windows/Caches/
+**/Caches/

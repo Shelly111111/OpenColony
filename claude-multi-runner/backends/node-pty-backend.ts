@@ -44,14 +44,25 @@ export class NodePtyBackend implements PtyBackend {
     const shell = options.shell || (process.platform === "win32" ? findGitBashPath() : null) || process.env.SHELL || "/bin/bash";
     const gitBashPath = process.platform === "win32" ? findGitBashPath() : null;
 
+    // 构建环境变量：不继承父进程的所有环境变量
+    // 只传递必要的变量和自定义变量
+    const env: Record<string, string> = { ...(options.env || {}) };
+
+    // 从 process.env 中复制必要的环境变量（如果未设置）
+    const neededEnvVars = ['PATH', 'HOME', 'USER', 'USERNAME', 'LANG', 'LC_ALL', 'TERM', 'SHELL'];
+    for (const key of neededEnvVars) {
+      if (process.env[key] && !env[key]) {
+        env[key] = process.env[key]!;
+      }
+    }
+
     const pty = nodePty.spawn(shell, [], {
       name: "xterm-256color",
       cols,
       rows,
       cwd: process.cwd(),
       env: {
-        ...process.env,
-        ...options.env,  // 合合传入的环境变量
+        ...env,
         TERM: "xterm-256color",
         COLORTERM: "truecolor",
         FORCE_COLOR: "1",

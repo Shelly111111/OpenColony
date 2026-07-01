@@ -9,9 +9,11 @@
     "build": "tsc"
   },
   "dependencies": {
-    "typescript": "^5.3.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.1.77",
+    "dotenv": "^16.4.0",
+    "node-pty": "^1.0.0",
     "ts-node": "^10.9.0",
-    "node-pty": "^1.0.0"
+    "typescript": "^5.3.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0"

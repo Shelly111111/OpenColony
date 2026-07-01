@@ -23,7 +23,13 @@ OpenColony - Claude CLI调度系统
 }
 
 async function main() {
-  const args = process.argv.slice(2);
+  // 正确处理参数：跳过 node、ts-node、脚本名
+  let args = process.argv.slice(2);
+
+  // 如果第一个参数是 .ts 或 .js 文件，跳过它
+  if (args.length > 0 && (args[0].endsWith('.ts') || args[0].endsWith('.js'))) {
+    args = args.slice(1);
+  }
 
   if (args.length === 0 || args[0] === "help") {
     printHelp();
@@ -88,7 +94,8 @@ async function main() {
         }
 
         // 重置argv，让claude-multi-runner的CLI解析正常工作
-        process.argv = ["node", "claude-multi-runner", ...claudeArgs];
+        // 注意：main.ts 期望的第一个参数是终端数量，所以直接传递 claudeArgs
+        process.argv = ["node", claudePath, ...claudeArgs];
         require(claudePath);
       } catch (error) {
         console.error("启动Claude PTY失败:", error);
