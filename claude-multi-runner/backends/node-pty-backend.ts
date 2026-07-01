@@ -3,7 +3,7 @@
  */
 
 import { PtyBackend } from "../types";
-import { VirtualScreen } from "../virtual-screen";
+import { VirtualScreen } from "./virtual-screen";
 import { findGitBashPath } from "../utils/git-bash";
 
 let nodePty: typeof import("node-pty") | null = null;

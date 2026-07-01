@@ -12,7 +12,7 @@ import { PtyBackend, ClaudeSession } from "./types";
 import { createPtyBackend } from "./backends/pty-selector";
 import { ensureLogDir, createLogFile, writeToLog, LOG_DIR } from "./utils/logger";
 import { getDefaultShell } from "./utils/git-bash";
-import { ClaudeSDKClient, getSDKClient } from "./sdk-client";
+import { ClaudeSDKClient, getSDKClient } from "./backends/sdk-client";
 
 // 屏幕日志文件后缀
 const SCREEN_LOG_SUFFIX = ".screen.log";

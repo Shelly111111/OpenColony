@@ -6,8 +6,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import * as dotenv from 'dotenv';
 import * as path from 'path';
-import * as fs from 'fs';
-import { writeToLog, LOG_DIR } from './utils/logger';
+import { writeToLog, LOG_DIR } from '../utils/logger';
 
 // 加载环境变量（SDK 模式需要）
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -118,12 +117,6 @@ export class ClaudeSDKClient {
       throw error;
     }
 
-    // 写入完成标记
-    const markerDir = path.join(LOG_DIR, '.completion');
-    if (!fs.existsSync(markerDir)) {
-      fs.mkdirSync(markerDir, { recursive: true });
-    }
-    fs.writeFileSync(path.join(markerDir, `completed-${sessionId}.marker`), 'done');
   }
 }
 
