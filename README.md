@@ -5,8 +5,8 @@
 ## 项目简介
 
 OpenColony 是一个强大的 Claude CLI 调度系统，包含：
-- **PTY 管理器**：使用 node-pty 管理多个 Claude 终端会话
-- **调度中心**：Master + Plan-Executor + Worker 三层架构
+- **Claude 管理器**：支持 SDK 和 PTY 两种模式，管理多个 Claude 终端会话
+- **调度中心**：Master + Plan-Executor + Worker 三层架构，支持 SDK 和 PTY 两种运行模式
 - **统一入口**：通过根目录的 npm scripts 统一管理所有服务
 
 ## 快速开始
@@ -36,14 +36,20 @@ cp scheduler/.env.example .env
 # 显示帮助
 npm start
 
-# 启动调度中心执行任务
+# 启动调度中心执行任务（默认 SDK 模式）
 npm start run "分析当前目录结构"
 
+# 指定模式：SDK 模式（使用 Claude Agent SDK）
+npm start run sdk "分析当前目录结构"
+
+# 指定模式：PTY 模式（使用 node-pty 终端）
+npm start run pty "分析当前目录结构"
+
 # 直接调用 Claude（默认 SDK 模式）
-npm start -- claude 1 "查看当前目录"
+npm start claude 1 "查看当前目录"
 
 # 使用 PTY 模式
-npm start -- claude pty 1 "查看当前目录"
+npm start claude pty 1 "查看当前目录"
 ```
 
 #### 使用独立脚本
@@ -92,7 +98,7 @@ OpenColony/
 | 命令 | 说明 |
 |------|------|
 | `npm start` | 显示帮助信息 |
-| `npm start run <需求>` | 启动调度中心执行任务 |
+| `npm start run [sdk\|pty] <需求>` | 启动调度中心执行任务（支持 SDK/PTY 模式） |
 | `npm start claude [sdk\|pty] <参数>` | 直接调用 Claude（支持 SDK/PTY 模式） |
 | `npm run run` | 等同于 `npm start run` |
 | `npm run scheduler` | 直接启动调度中心 |
@@ -120,16 +126,20 @@ OpenColony/
 
 ### 2. 调度中心 (scheduler)
 
-- 使用 node-pty 创建真实终端
-- 支持多终端并行执行
-- 实时日志记录
-- 虚拟屏幕捕获输出
+调度中心支持 **SDK** 和 **PTY** 两种运行模式，两种模式都使用 `ClaudeUnifiedPtyManager` 统一管理：
 
-### 2. 调度中心 (scheduler)
+**SDK 模式（默认）**：
+- 使用 Claude Agent SDK 执行任务
+- 适合自动化和快速响应场景
 
+**PTY 模式**：
+- 使用 node-pty 创建真实终端执行任务
+- 支持完整的交互式体验
+
+**架构组成**：
 - **Master 节点**：任务规划和调度
 - **Plan Executor**：执行计划和管理子任务
-- **Worker 管理器**：管理 PTY  worker 集群
+- **Worker 管理器**：管理 Worker 集群，支持模式切换
 - **仲裁引擎**：结果验证和冲突解决
 
 ## 开发指南

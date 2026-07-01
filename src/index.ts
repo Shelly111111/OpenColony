@@ -11,12 +11,12 @@ function printHelp() {
 OpenColony - Claude CLI调度系统
 
 使用方法:
-  npm start run <用户需求>          启动调度中心执行任务
+  npm start run                     启动调度中心（默认模式）
   npm start claude <命令>           直接调用Claude PTY执行命令
   npm start help                    显示帮助信息
 
 示例:
-  npm start run "分析当前目录结构"
+  npm start run                     启动调度中心默认模式
   npm start claude 1 "查看当前目录" "修复bug"
   npx ts-node claude-multi-runner/main.ts 1 "查看当前目录"
 `);
@@ -40,41 +40,49 @@ async function main() {
 
   switch (command) {
     case "run":
-      // 启动调度中心
-      const schedulerArgs = args.slice(1);
-      if (schedulerArgs.length === 0) {
-        console.error("请提供用户需求");
-        printHelp();
+      // 启动调度中心 - 默认模式
+      const schedulerPath = path.join(__dirname, "../scheduler/src/index.ts");
+      if (!fs.existsSync(schedulerPath)) {
+        console.error(`调度中心入口文件不存在: ${schedulerPath}`);
         process.exit(1);
       }
 
-      // 动态引入scheduler并执行
-      try {
-        const schedulerPath = path.join(__dirname, "../scheduler/src/index.ts");
-        if (!fs.existsSync(schedulerPath)) {
-          console.error(`调度中心入口文件不存在: ${schedulerPath}`);
-          process.exit(1);
-        }
+      // 获取除 "run" 外的所有参数
+      let taskArgs = args.slice(1);
 
-        // 使用子进程方式启动scheduler
-        const { spawn } = require("child_process");
-        const child = spawn("npx", ["ts-node", schedulerPath, "run", ...schedulerArgs], {
+      // 检查是否有模式参数 (sdk 或 pty)
+      let mode = 'sdk'; // 默认SDK模式
+      if (taskArgs.length > 0 && (taskArgs[0] === 'sdk' || taskArgs[0] === 'pty')) {
+        mode = taskArgs[0];
+        taskArgs = taskArgs.slice(1);
+      }
+
+      // 使用子进程方式启动scheduler
+      const { spawn } = require("child_process");
+      let child;
+
+      if (taskArgs.length > 0) {
+        // 有任务参数时，传递模式和任务
+        child = spawn("npx", ["ts-node", schedulerPath, mode, ...taskArgs], {
           stdio: "inherit",
           shell: true
         });
-
-        child.on("close", (code: any) => {
-          process.exit(code || 0);
+      } else {
+        // 无任务参数时，只传递模式
+        child = spawn("npx", ["ts-node", schedulerPath, mode], {
+          stdio: "inherit",
+          shell: true
         });
+      }
 
-        child.on("error", (error: any) => {
-          console.error("启动调度中心失败:", error);
-          process.exit(1);
-        });
-      } catch (error) {
+      child.on("close", (code: any) => {
+        process.exit(code || 0);
+      });
+
+      child.on("error", (error: any) => {
         console.error("启动调度中心失败:", error);
         process.exit(1);
-      }
+      });
       break;
 
     case "claude":

@@ -25,9 +25,11 @@ export class WorkerManager {
   private config: SchedulerConfig;
   private workers: Map<string, WorkerInstance> = new Map();
   private nextSessionId: number = 1;
+  private runMode: 'sdk' | 'pty' = 'pty'; // 默认PTY模式
 
   constructor(config: SchedulerConfig) {
     this.config = config;
+    this.runMode = config.runMode || 'pty'; // 从配置中获取运行模式
 
     // 确保日志根目录存在
     if (!fs.existsSync(WORKER_LOG_ROOT)) {
@@ -36,10 +38,11 @@ export class WorkerManager {
   }
 
   /**
-   * 执行单个子任务
+   * 执行单个子任务（根据配置选择模式）
+   * 两种模式都使用 ClaudeUnifiedPtyManager
    */
   async executeSubTask(subTask: SubTask, traceId: string, logDir?: string): Promise<WorkerOutput> {
-    console.log(`[WorkerManager] 分配子任务 ${subTask.id} 到Worker，类型: ${subTask.workerType}`);
+    console.log(`[WorkerManager] 分配子任务 ${subTask.id} 到Worker，类型: ${subTask.workerType}，模式: ${this.runMode}`);
 
     // 创建Worker实例
     const worker = await this.createWorker(subTask.workerType, logDir);
@@ -51,8 +54,8 @@ export class WorkerManager {
     worker.logFile = logFile;
 
     try {
-      // 执行任务（使用PTY Claude CLI）
-      const result = await this.runTaskWithPty(worker, subTask, traceId, logFile);
+      // 两种模式都使用 ClaudeUnifiedPtyManager
+      const result = await this.runTaskWithManager(worker, subTask, traceId, logFile, this.runMode);
 
       console.log(`[WorkerManager] 子任务 ${subTask.id} 执行完成，状态: ${result.status}`);
 
@@ -77,38 +80,31 @@ export class WorkerManager {
   }
 
   /**
-   * 使用PTY Claude CLI执行任务
+   * 使用 ClaudeUnifiedPtyManager 执行任务（支持 SDK 和 PTY 两种模式）
    * 参照 main.ts 的方案：每个任务创建独立的 ClaudeUnifiedPtyManager
    */
-  private async runTaskWithPty(
+  private async runTaskWithManager(
     worker: WorkerInstance,
     subTask: SubTask,
     traceId: string,
-    logFile: string
+    logFile: string,
+    mode: 'sdk' | 'pty'
   ): Promise<WorkerOutput> {
     const sessionId = this.nextSessionId++;
 
     // 写入日志
-    this.writeLog(logFile, `=== Worker ${worker.id} 开始任务 ===`);
+    this.writeLog(logFile, `=== Worker ${worker.id} 开始任务 (${mode.toUpperCase()}模式) ===`);
     this.writeLog(logFile, `任务ID: ${subTask.id}`);
     this.writeLog(logFile, `任务名称: ${subTask.name}`);
     this.writeLog(logFile, `Worker类型: ${worker.type}`);
     this.writeLog(logFile, `会话ID: ${sessionId}`);
     this.writeLog(logFile, `TraceID: ${traceId}`);
+    this.writeLog(logFile, `运行模式: ${mode}`);
 
     try {
-      // 确保 Git Bash 路径已设置（防止 PTY 使用 CMD）
-      if (!process.env.CLAUDE_CODE_GIT_BASH_PATH) {
-        const gitBashPath = 'D:\\Git\\bin\\bash.exe';
-        if (fs.existsSync(gitBashPath)) {
-          process.env.CLAUDE_CODE_GIT_BASH_PATH = gitBashPath;
-          this.writeLog(logFile, `[PTY] 设置 Git Bash 路径: ${gitBashPath}`);
-        }
-      }
-
-      // 创建独立的PTY管理器（参照 main.ts）
+      // 创建独立的 ClaudeUnifiedPtyManager（参照 main.ts）
       const terminalCount = 1; // 每个任务只启动1个终端
-      const manager = new ClaudeUnifiedPtyManager(terminalCount);
+      const manager = new ClaudeUnifiedPtyManager(terminalCount, mode);
 
       // 设置SIGINT处理
       const sigintHandler = () => {
@@ -118,23 +114,23 @@ export class WorkerManager {
       };
       process.on("SIGINT", sigintHandler);
 
-      this.writeLog(logFile, `[PTY] 初始化PTY管理器...`);
-      console.log(`[WorkerManager] Worker ${worker.id} 初始化PTY管理器...`);
+      this.writeLog(logFile, `[${mode.toUpperCase()}] 初始化管理器...`);
+      console.log(`[WorkerManager] Worker ${worker.id} 初始化 ${mode.toUpperCase()} 管理器...`);
 
       await manager.initialize();
 
       // 格式化命令以适应PTY输入（将多行转换为单行）
       const command = this.formatCommandForPty(subTask.command);
-      this.writeLog(logFile, `[PTY] 执行命令: ${command.substring(0, 200)}...`);
+      this.writeLog(logFile, `[${mode.toUpperCase()}] 执行命令: ${command.substring(0, 200)}...`);
 
-      // 执行命令（参照 main.ts 的 runAll 模式）
-      this.writeLog(logFile, `[PTY] 开始执行命令...`);
-      console.log(`[WorkerManager] Worker ${worker.id} 执行PTY命令...`);
+      // 执行命令
+      this.writeLog(logFile, `[${mode.toUpperCase()}] 开始执行命令...`);
+      console.log(`[WorkerManager] Worker ${worker.id} 执行 ${mode.toUpperCase()} 命令...`);
 
       await manager.runAll([command]);
 
-      // 读取输出（从claude-logs目录）
-      this.writeLog(logFile, `[PTY] 执行完成，读取输出...`);
+      // 读取输出
+      this.writeLog(logFile, `[${mode.toUpperCase()}] 执行完成，读取输出...`);
       const output = this.readOutputFromClaudeLogs(sessionId, logFile);
 
       // 清理：移除SIGINT处理器
@@ -143,8 +139,8 @@ export class WorkerManager {
       // 关闭管理器
       manager.killAll();
 
-      this.writeLog(logFile, `[PTY] 输出长度: ${output.length}`);
-      this.writeLog(logFile, `[PTY] 输出内容:\n${output.substring(0, 2000)}...`);
+      this.writeLog(logFile, `[${mode.toUpperCase()}] 输出长度: ${output.length}`);
+      this.writeLog(logFile, `[${mode.toUpperCase()}] 输出内容:\n${output.substring(0, 2000)}...`);
 
       // 解析输出为标准格式（使用LLM解析混乱的PTY输出）
       const parsedOutput = await this.parseWorkerOutputWithLLM(output, worker, traceId, logFile);
@@ -157,8 +153,8 @@ export class WorkerManager {
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error(`[WorkerManager] PTY任务执行异常:`, error);
-      this.writeLog(logFile, `[ERROR] PTY任务执行异常: ${errorMsg}`);
+      console.error(`[WorkerManager] ${mode.toUpperCase()}任务执行异常:`, error);
+      this.writeLog(logFile, `[ERROR] ${mode.toUpperCase()}任务执行异常: ${errorMsg}`);
 
       return {
         status: "fail",
@@ -169,6 +165,20 @@ export class WorkerManager {
         error: errorMsg
       };
     }
+  }
+
+  /**
+   * 使用PTY Claude CLI执行任务
+   * 现在委托给 runTaskWithManager 方法
+   */
+  private async runTaskWithPty(
+    worker: WorkerInstance,
+    subTask: SubTask,
+    traceId: string,
+    logFile: string
+  ): Promise<WorkerOutput> {
+    // 委托给统一的方法，使用 pty 模式
+    return this.runTaskWithManager(worker, subTask, traceId, logFile, 'pty');
   }
 
 

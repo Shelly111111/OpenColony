@@ -37,7 +37,8 @@ export class MasterScheduler {
       defaultTimeoutMs: config.defaultTimeoutMs || 30 * 60 * 1000, // 30分钟
       arbitrationMode: config.arbitrationMode || ArbitrationMode.CONFIDENCE_VOTE,
       enableReview: config.enableReview !== undefined ? config.enableReview : true,
-      workerTypes: config.workerTypes || ['general_agent']
+      workerTypes: config.workerTypes || ['general_agent'],
+      runMode: config.runMode || 'pty' // 添加 runMode，默认 pty
     };
 
     this.planExecutor = new PlanExecutor(this.config);

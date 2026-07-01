@@ -168,6 +168,7 @@ export interface SchedulerConfig {
   arbitrationMode: ArbitrationMode;
   enableReview: boolean;
   workerTypes: string[];
+  runMode?: 'sdk' | 'pty'; // 运行模式：sdk（默认）或 pty
 }
 
 /**
