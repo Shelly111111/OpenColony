@@ -5,6 +5,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { log } from "./logger";
 
 export interface RoleConfig {
   id: string;
@@ -34,7 +35,7 @@ export class RoleManager {
   private loadRoles(): void {
     try {
       if (!fs.existsSync(this.configPath)) {
-        console.warn(`[RoleManager] 角色配置文件不存在: ${this.configPath}，使用默认配置`);
+        log({ message: `[RoleManager] 角色配置文件不存在: ${this.configPath}，使用默认配置`, level: 'warn' });
         this.loadDefaultRoles();
         return;
       }
@@ -46,9 +47,9 @@ export class RoleManager {
         this.roles.set(role.id, role);
       }
 
-      console.log(`[RoleManager] 已加载 ${this.roles.size} 个角色配置`);
+      log({ message: `[RoleManager] 已加载 ${this.roles.size} 个角色配置` });
     } catch (error) {
-      console.error(`[RoleManager] 加载角色配置失败:`, error);
+      log({ message: `[RoleManager] 加载角色配置失败: ${error}`, level: 'error' });
       this.loadDefaultRoles();
     }
   }
@@ -132,9 +133,9 @@ export class RoleManager {
         roles: this.getAllRoles()
       };
       fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2), 'utf-8');
-      console.log(`[RoleManager] 角色配置已保存到: ${this.configPath}`);
+      log({ message: `[RoleManager] 角色配置已保存到: ${this.configPath}` });
     } catch (error) {
-      console.error(`[RoleManager] 保存角色配置失败:`, error);
+      log({ message: `[RoleManager] 保存角色配置失败: ${error}`, level: 'error' });
     }
   }
 }

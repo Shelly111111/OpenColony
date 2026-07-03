@@ -10,7 +10,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { PtyBackend, ClaudeSession } from "./types";
 import { createPtyBackend } from "./backends/pty-selector";
-import { ensureLogDir, createLogFile, writeToLog, LOG_DIR } from "./utils/logger";
+import { ensureLogDir, createLogFile, log, formatOutput, LOG_DIR } from "./utils/logger";
 import { getDefaultShell } from "./utils/git-bash";
 import { ClaudeSDKClient, getSDKClient } from "./backends/sdk-client";
 
@@ -35,19 +35,6 @@ const STATUS_BAR_KEYWORDS = [
   'esc to interrupt',
   'ctrl+o to expand',
 ];
-
-/**
- * 格式化输出（带颜色前缀）
- */
-function formatOutput(sessionId: number, content: string): string {
-  const color = COLORS[(sessionId - 1) % COLORS.length];
-  const prefix = `[终端${sessionId}] `;
-  return content
-    .split("\n")
-    .filter(line => line.trim() !== '')
-    .map(line => `${color}${prefix}${RESET}${line}`)
-    .join("\n");
-}
 
 export class ClaudeUnifiedPtyManager {
   private backend: PtyBackend | null = null;
@@ -163,35 +150,31 @@ export class ClaudeUnifiedPtyManager {
         const session = this.sessions.find(s => s.terminalId === terminalId);
         if (session) {
           if (session.status !== "running") {
-            writeToLog(session.logFile, `[INFO] 进程退出 (退出码: ${code})，会话已终止`);
+            log({ logFile: session.logFile, message: `[INFO] 进程退出 (退出码: ${code})，会话已终止`, silent: true });
             return;
           }
 
           session.status = code === 0 ? "completed" : "error";
-          writeToLog(session.logFile, `进程结束，退出码: ${code}`);
-          console.log(formatOutput(session.id, `终端结束 (退出码: ${code}) - 状态: ${session.status}`));
+          log({ logFile: session.logFile, message: `进程结束，退出码: ${code}` });
+          log({ logFile: session.logFile, message: `终端结束 (退出码: ${code}) - 状态: ${session.status}`, sessionId: session.id });
           this.activeCount--;
 
           const endTime = new Date();
           const duration = (endTime.getTime() - session.startTime.getTime()) / 1000;
-          writeToLog(
-            session.logFile,
-            `=== 会话汇总 ===\n开始时间: ${session.startTime.toISOString()}\n结束时间: ${endTime.toISOString()}\n运行时长: ${duration}秒\n命令: ${session.command}\n状态: ${session.status}`
-          );
+          log({ logFile: session.logFile, message: `=== 会话汇总 ===\n开始时间: ${session.startTime.toISOString()}\n结束时间: ${endTime.toISOString()}\n运行时长: ${duration}秒\n命令: ${session.command}\n状态: ${session.status}`, silent: true });
         }
       };
 
       this.backend.onError = (terminalId: string, message: string) => {
         const session = this.sessions.find(s => s.terminalId === terminalId);
         if (session) {
-          writeToLog(session.logFile, `[ERROR] ${message}`);
-          console.log(formatOutput(session.id, `[错误] ${message}`));
+          log({ logFile: session.logFile, message: `[ERROR] ${message}`, sessionId: session.id, level: 'error' });
         }
       };
 
-      console.log(`[pty] 使用 PTY 后端: ${this.backendType}`);
+      log({ logFile: undefined, message: `[pty] 使用 PTY 后端: ${this.backendType}` });
     } else {
-      console.log(`[sdk] 使用 SDK 模式`);
+      log({ logFile: undefined, message: `[sdk] 使用 SDK 模式` });
     }
   }
 
@@ -216,9 +199,9 @@ export class ClaudeUnifiedPtyManager {
 
     if (this.mode === 'sdk') {
       // SDK 模式
-      writeToLog(session.logFile, `启动 Claude SDK 会话 ${sessionId}`);
-      writeToLog(session.logFile, `执行命令: ${command}`);
-      console.log(formatOutput(sessionId, `启动 SDK 会话，准备执行: "${command}"`));
+      log({ logFile: session.logFile, message: `启动 Claude SDK 会话 ${sessionId}` });
+      log({ logFile: session.logFile, message: `执行命令: ${command}` });
+      log({ logFile: session.logFile, message: `启动 SDK 会话，准备执行: "${command}"`, sessionId });
 
       this.activeCount++;
 
@@ -226,11 +209,11 @@ export class ClaudeUnifiedPtyManager {
         await this.sdkClient!.executeCommand(command, sessionId, session.logFile);
         session.status = "completed";
         this.activeCount--;
-        console.log(formatOutput(sessionId, `SDK 执行完成`));
+        log({ logFile: session.logFile, message: `SDK 执行完成`, sessionId });
       } catch (error) {
         session.status = "error";
         this.activeCount--;
-        console.log(formatOutput(sessionId, `SDK 执行失败: ${error}`));
+        log({ logFile: session.logFile, message: `SDK 执行失败: ${error}`, sessionId, level: 'error' });
       }
     } else {
       // PTY 模式
@@ -238,12 +221,12 @@ export class ClaudeUnifiedPtyManager {
         throw new Error("PTY 后端未初始化");
       }
 
-      writeToLog(session.logFile, `启动 Claude 终端 ${sessionId} (PTY: ${this.backendType})`);
-      writeToLog(session.logFile, `执行命令: ${command}`);
-      console.log(formatOutput(sessionId, `启动终端，准备执行: "${command}" (${this.backendType})`));
+      log({ logFile: session.logFile, message: `启动 Claude 终端 ${sessionId} (PTY: ${this.backendType})` });
+      log({ logFile: session.logFile, message: `执行命令: ${command}` });
+      log({ logFile: session.logFile, message: `启动终端，准备执行: "${command}" (${this.backendType})`, sessionId });
 
       const shellPath = getDefaultShell();
-      writeToLog(session.logFile, `使用 Shell: ${shellPath}`);
+      log({ logFile: session.logFile, message: `使用 Shell: ${shellPath}` });
 
       await this.backend.spawn(session.terminalId, {
         shell: shellPath,
@@ -259,7 +242,7 @@ export class ClaudeUnifiedPtyManager {
 
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      writeToLog(session.logFile, `发送 'claude --dangerously-skip-permissions' 命令启动 Claude CLI`);
+      log({ logFile: session.logFile, message: `发送 'claude --dangerously-skip-permissions' 命令启动 Claude CLI`, silent: true });
 
       // 构建 Stop hook 配置
       const hookScriptPath = path.join(process.cwd(), "claude-multi-runner/hooks", "completion-marker.sh").replace(/\\/g, "/");
@@ -280,18 +263,18 @@ export class ClaudeUnifiedPtyManager {
       });
 
       const claudeCmd = `claude --dangerously-skip-permissions --settings '${settingsJson}'`;
-      writeToLog(session.logFile, `启动命令: ${claudeCmd}`);
+      log({ logFile: session.logFile, message: `启动命令: ${claudeCmd}`, silent: true });
       this.backend.write(session.terminalId, claudeCmd + "\r");
 
       await new Promise((resolve) => setTimeout(resolve, 2000));
       const claudeReady = await this.waitForClaudeReady(session, 30000);
 
       if (!claudeReady) {
-        writeToLog(session.logFile, `[WARN] Claude 启动超时，额外等待 2 秒后发送命令`);
+        log({ logFile: session.logFile, message: `[WARN] Claude 启动超时，额外等待 2 秒后发送命令`, level: 'warn', silent: true });
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
 
-      writeToLog(session.logFile, `发送用户命令到 Claude: "${command}"`);
+      log({ logFile: session.logFile, message: `发送用户命令到 Claude: "${command}"`, silent: true });
       await this.sendCommandInChunks(session.terminalId, command, session.logFile);
     }
   }
@@ -307,14 +290,14 @@ export class ClaudeUnifiedPtyManager {
 
     // 如果命令长度小于阈值，直接发送
     if (command.length <= CHUNK_SIZE * 2) {
-      writeToLog(logFile, `[INFO] 命令长度 ${command.length} 字符，直接发送`);
+      log({ logFile, message: `[INFO] 命令长度 ${command.length} 字符，直接发送`, silent: true });
       this.backend!.write(terminalId, command + "\r");
       await new Promise(resolve => setTimeout(resolve, COMMAND_END_DELAY_MS));
       return;
     }
 
     // 长命令使用分块发送
-    writeToLog(logFile, `[INFO] 命令长度 ${command.length} 字符，使用分块发送（每块 ${CHUNK_SIZE} 字符）`);
+    log({ logFile, message: `[INFO] 命令长度 ${command.length} 字符，使用分块发送（每块 ${CHUNK_SIZE} 字符）`, silent: true });
 
     // 将命令按块发送
     for (let i = 0; i < command.length; i += CHUNK_SIZE) {
@@ -327,7 +310,7 @@ export class ClaudeUnifiedPtyManager {
     }
 
     // 发送回车执行命令
-    writeToLog(logFile, `[INFO] 命令分块发送完成，发送回车执行`);
+    log({ logFile, message: `[INFO] 命令分块发送完成，发送回车执行`, silent: true });
     this.backend!.write(terminalId, "\r");
 
     // 等待命令执行
@@ -358,7 +341,7 @@ export class ClaudeUnifiedPtyManager {
         if (pattern.test(buffer)) {
           if (readyDetectedTime === 0) {
             readyDetectedTime = Date.now();
-            writeToLog(session.logFile, `[INFO] 检测到 Claude 启动特征: ${pattern}`);
+            log({ logFile: session.logFile, message: `[INFO] 检测到 Claude 启动特征: ${pattern}`, silent: true });
           }
           break;
         }
@@ -368,7 +351,7 @@ export class ClaudeUnifiedPtyManager {
       if (readyDetectedTime > 0) {
         const elapsedSinceReady = Date.now() - readyDetectedTime;
         if (elapsedSinceReady >= stabilityWaitMs) {
-          writeToLog(session.logFile, `[INFO] Claude 准备就绪，稳定等待 ${stabilityWaitMs}ms 完成`);
+          log({ logFile: session.logFile, message: `[INFO] Claude 准备就绪，稳定等待 ${stabilityWaitMs}ms 完成`, silent: true });
           return true;
         }
       }
@@ -376,15 +359,13 @@ export class ClaudeUnifiedPtyManager {
       await new Promise((resolve) => setTimeout(resolve, checkInterval));
     }
 
-    writeToLog(session.logFile, `[WARN] waitForClaudeReady 超时，maxWaitMs: ${maxWaitMs}`);
+    log({ logFile: session.logFile, message: `[WARN] waitForClaudeReady 超时，maxWaitMs: ${maxWaitMs}`, level: 'warn', silent: true });
     return false;
   }
 
   async runAll(commands: string[]): Promise<void> {
     if (commands.length < this.maxSessions) {
-      console.log(
-        `\x1b[33m警告: 命令数量(${commands.length})少于终端数量(${this.maxSessions})，部分终端将空闲\x1b[0m`
-      );
+      log({ logFile: undefined, message: `警告: 命令数量(${commands.length})少于终端数量(${this.maxSessions})，部分终端将空闲`, level: 'warn' });
     }
 
     const spawnPromises: Promise<void>[] = [];
@@ -397,8 +378,8 @@ export class ClaudeUnifiedPtyManager {
     await Promise.all(spawnPromises);
 
     const modeText = this.mode === 'sdk' ? 'SDK' : `PTY (${this.backendType})`;
-    console.log(`\x1b[36m=== 已启动 ${this.maxSessions} 个 Claude 终端 (${modeText}) ===\x1b[0m`);
-    console.log(`日志目录: ${LOG_DIR}`);
+    log({ logFile: undefined, message: `=== 已启动 ${this.maxSessions} 个 Claude 终端 (${modeText}) ===` });
+    log({ logFile: undefined, message: `日志目录: ${LOG_DIR}` });
 
     await this.waitForCompletion();
   }
@@ -416,16 +397,12 @@ export class ClaudeUnifiedPtyManager {
             // 检查标记文件是否存在
             if (fs.existsSync(markerFile)) {
               session.status = "completed";
-              writeToLog(session.logFile, `[INFO] 检测到完成标记文件: ${markerFile}`);
-              console.log(formatOutput(session.id, `任务完成 (检测到 Stop hook 标记)`));
+              log({ logFile: session.logFile, message: `任务完成 (检测到 Stop hook 标记)`, sessionId: session.id });
               this.activeCount--;
 
               const endTime = new Date();
               const duration = (endTime.getTime() - session.startTime.getTime()) / 1000;
-              writeToLog(
-                session.logFile,
-                `=== 会话汇总 ===\n开始时间: ${session.startTime.toISOString()}\n结束时间: ${endTime.toISOString()}\n运行时长: ${duration}秒\n命令: ${session.command}\n状态: ${session.status}`
-              );
+              log({ logFile: session.logFile, message: `=== 会话汇总 ===\n开始时间: ${session.startTime.toISOString()}\n结束时间: ${endTime.toISOString()}\n运行时长: ${duration}秒\n命令: ${session.command}\n状态: ${session.status}`, silent: true });
 
               // 删除标记文件（避免重复检测）
               fs.unlinkSync(markerFile);
@@ -438,7 +415,7 @@ export class ClaudeUnifiedPtyManager {
 
         if (this.activeCount === 0) {
           clearInterval(checkInterval);
-          console.log("\n\x1b[36m=== 所有 Claude 终端已完成 ===\x1b[0m");
+          log({ logFile: undefined, message: `\n=== 所有 Claude 终端已完成 ===` });
           this.printSummary();
           resolve();
         }
@@ -447,26 +424,27 @@ export class ClaudeUnifiedPtyManager {
   }
 
   private printSummary(): void {
-    console.log("\n=== 执行汇总 ===");
+    log({ logFile: undefined, message: "\n=== 执行汇总 ===" });
     for (const session of this.sessions) {
-      console.log(
-        `终端 ${session.id}: ${session.status} - 日志: ${path.basename(session.logFile)}, 屏幕: ${path.basename(session.screenLogFile || '')}`
-      );
+      log({
+        logFile: undefined,
+        message: `终端 ${session.id}: ${session.status} - 日志: ${path.basename(session.logFile)}, 屏幕: ${path.basename(session.screenLogFile || '')}`
+      });
     }
-    console.log(`\n所有日志保存在: ${LOG_DIR}`);
+    log({ logFile: undefined, message: `\n所有日志保存在: ${LOG_DIR}` });
   }
 
   killAll(): void {
     if (this.mode === 'pty' && this.backend) {
       for (const session of this.sessions) {
         if (session.status === "running") {
-          writeToLog(session.logFile, "手动终止进程");
+          log({ logFile: session.logFile, message: "手动终止进程", silent: true });
           this.backend.kill(session.terminalId);
         }
       }
       this.backend.shutdown();
     } else if (this.mode === 'sdk') {
-      console.log(`[sdk] SDK 模式不支持手动终止`);
+      log({ logFile: undefined, message: `[sdk] SDK 模式不支持手动终止` });
     }
   }
 }

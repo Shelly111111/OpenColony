@@ -4,6 +4,7 @@
 
 import { MasterScheduler } from "./master";
 import { TaskPriority, ArbitrationMode } from "./types";
+import { log } from "./logger";
 
 // 导出所有公共类型和类
 export * from "./types";
@@ -77,7 +78,7 @@ async function main() {
  * @param userRequest 可选的任务请求，如果提供则执行该任务
  */
 async function runDefaultMode(mode: 'sdk' | 'pty' = 'sdk', userRequest?: string) {
-  console.log(`=== 调度中心默认模式 (${mode.toUpperCase()}模式) ===\n`);
+  log({ message: `=== 调度中心默认模式 (${mode.toUpperCase()}模式) ===` });
 
   // 使用默认配置创建调度器
   const scheduler = new MasterScheduler({
@@ -89,38 +90,38 @@ async function runDefaultMode(mode: 'sdk' | 'pty' = 'sdk', userRequest?: string)
   });
 
   try {
-    console.log(`调度中心已启动\n`);
-    console.log(`配置信息:`);
-    console.log(`- 最大Worker数: 3`);
-    console.log(`- 仲裁模式: confidence_vote`);
-    console.log(`- 评审功能: 已启用`);
+    log({ message: `调度中心已启动` });
+    log({ message: `配置信息:` });
+    log({ message: `- 最大Worker数: 3` });
+    log({ message: `- 仲裁模式: confidence_vote` });
+    log({ message: `- 评审功能: 已启用` });
 
     // 如果提供了任务请求，执行该任务
     if (userRequest) {
-      console.log(`\n=== 执行任务 ===`);
-      console.log(`需求: ${userRequest}`);
-      console.log(`==================\n`);
+      log({ message: `\n=== 执行任务 ===` });
+      log({ message: `需求: ${userRequest}` });
+      log({ message: `==================` });
 
       const result = await scheduler.submitRequest(userRequest, {
         name: "默认模式任务",
         priority: TaskPriority.P1
       });
 
-      console.log(`\n=== 任务执行完成 ===`);
-      console.log(`状态: ${result.success ? "成功" : "失败"}`);
-      console.log(`TraceID: ${result.traceId}`);
-      console.log(`耗时: ${result.duration.toFixed(2)} 秒`);
-      console.log(`==================\n`);
+      log({ message: `\n=== 任务执行完成 ===` });
+      log({ message: `状态: ${result.success ? "成功" : "失败"}` });
+      log({ message: `TraceID: ${result.traceId}` });
+      log({ message: `耗时: ${result.duration.toFixed(2)} 秒` });
+      log({ message: `==================` });
 
       if (result.success) {
-        console.log(`输出结果:`);
+        log({ message: `输出结果:` });
         if (typeof result.data === "string") {
-          console.log(result.data);
+          log({ message: result.data });
         } else {
-          console.log(JSON.stringify(result.data, null, 2));
+          log({ message: JSON.stringify(result.data, null, 2) });
         }
       } else {
-        console.error(`错误信息: ${result.error}`);
+        log({ message: `错误信息: ${result.error}`, level: 'error' });
       }
 
       // 任务执行完成后关闭调度器
@@ -129,14 +130,14 @@ async function runDefaultMode(mode: 'sdk' | 'pty' = 'sdk', userRequest?: string)
     }
 
     // 没有任务请求时，保持运行
-    console.log(`\n提示: 使用 'npm start run "任务描述"' 提交任务\n`);
-    console.log(`调度中心正在运行，按 Ctrl+C 停止...\n`);
+    log({ message: `\n提示: 使用 'npm start run "任务描述"' 提交任务` });
+    log({ message: `调度中心正在运行，按 Ctrl+C 停止...` });
 
     // 保持进程运行
     await new Promise(() => {});
 
   } catch (error) {
-    console.error(`调度中心运行异常: ${error}`);
+    log({ message: `调度中心运行异常: ${error}`, level: 'error' });
   } finally {
     await scheduler.shutdown();
   }
@@ -193,7 +194,7 @@ async function runCommand(args: string[]) {
           if (["P0", "P1", "P2"].includes(priority)) {
             options.priority = priority as TaskPriority;
           } else {
-            console.error(`无效的优先级: ${priority}，使用默认值 P1`);
+            log({ message: `无效的优先级: ${priority}，使用默认值 P1`, level: 'error' });
           }
           break;
         case "--workers":
@@ -201,7 +202,7 @@ async function runCommand(args: string[]) {
           if (!isNaN(workers) && workers > 0) {
             options.maxWorkers = workers;
           } else {
-            console.error(`无效的Worker数量: ${args[i]}，使用默认值 3`);
+            log({ message: `无效的Worker数量: ${args[i]}，使用默认值 3`, level: 'error' });
           }
           break;
         case "--mode":
@@ -209,14 +210,14 @@ async function runCommand(args: string[]) {
           if (["confidence_vote", "agent_priority", "merge_diff"].includes(mode)) {
             options.arbitrationMode = mode as ArbitrationMode;
           } else {
-            console.error(`无效的仲裁模式: ${mode}，使用默认值 confidence_vote`);
+            log({ message: `无效的仲裁模式: ${mode}，使用默认值 confidence_vote`, level: 'error' });
           }
           break;
         case "--no-review":
           options.enableReview = false;
           break;
         default:
-          console.warn(`未知选项: ${arg}`);
+          log({ message: `未知选项: ${arg}`, level: 'warn' });
           break;
       }
     } else {
@@ -230,7 +231,7 @@ async function runCommand(args: string[]) {
   }
 
   if (!userRequest) {
-    console.error("请提供用户需求");
+    log({ message: "请提供用户需求", level: 'error' });
     printHelp();
     process.exit(1);
   }
@@ -244,11 +245,11 @@ async function runCommand(args: string[]) {
   });
 
   try {
-    console.log(`\n=== 开始执行任务 ===`);
-    console.log(`需求: ${userRequest}`);
-    if (options.name) console.log(`名称: ${options.name}`);
-    if (options.priority) console.log(`优先级: ${options.priority}`);
-    console.log(`==================\n`);
+    log({ message: `\n=== 开始执行任务 ===` });
+    log({ message: `需求: ${userRequest}` });
+    if (options.name) log({ message: `名称: ${options.name}` });
+    if (options.priority) log({ message: `优先级: ${options.priority}` });
+    log({ message: `==================` });
 
     // 提交任务
     const result = await scheduler.submitRequest(userRequest, {
@@ -256,25 +257,25 @@ async function runCommand(args: string[]) {
       priority: options.priority
     });
 
-    console.log(`\n=== 任务执行完成 ===`);
-    console.log(`状态: ${result.success ? "成功" : "失败"}`);
-    console.log(`TraceID: ${result.traceId}`);
-    console.log(`耗时: ${result.duration.toFixed(2)} 秒`);
-    console.log(`==================\n`);
+    log({ message: `\n=== 任务执行完成 ===` });
+    log({ message: `状态: ${result.success ? "成功" : "失败"}` });
+    log({ message: `TraceID: ${result.traceId}` });
+    log({ message: `耗时: ${result.duration.toFixed(2)} 秒` });
+    log({ message: `==================` });
 
     if (result.success) {
-      console.log(`输出结果:`);
+      log({ message: `输出结果:` });
       if (typeof result.data === "string") {
-        console.log(result.data);
+        log({ message: result.data });
       } else {
-        console.log(JSON.stringify(result.data, null, 2));
+        log({ message: JSON.stringify(result.data, null, 2) });
       }
     } else {
-      console.error(`错误信息: ${result.error}`);
+      log({ message: `错误信息: ${result.error}`, level: 'error' });
     }
 
   } catch (error) {
-    console.error(`任务执行异常: ${error}`);
+    log({ message: `任务执行异常: ${error}`, level: 'error' });
   } finally {
     await scheduler.shutdown();
   }
@@ -284,7 +285,7 @@ async function runCommand(args: string[]) {
  * 运行测试用例
  */
 async function runTest() {
-  console.log(`=== 运行测试用例 ===\n`);
+  log({ message: `=== 运行测试用例 ===` });
 
   // 创建调度器
   const scheduler = new MasterScheduler({
@@ -297,33 +298,33 @@ async function runTest() {
     // 测试任务：简单的需求分析
     const testRequest = "请分析调度中心项目的技术架构，列出主要模块和功能";
 
-    console.log(`测试需求: ${testRequest}`);
-    console.log(`开始执行测试任务...\n`);
+    log({ message: `测试需求: ${testRequest}` });
+    log({ message: `开始执行测试任务...` });
 
     const result = await scheduler.submitRequest(testRequest, {
       name: "架构分析测试任务",
       priority: TaskPriority.P1
     });
 
-    console.log(`\n测试结果:`);
-    console.log(`状态: ${result.success ? "成功" : "失败"}`);
-    console.log(`TraceID: ${result.traceId}`);
-    console.log(`耗时: ${result.duration.toFixed(2)} 秒\n`);
+    log({ message: `\n测试结果:` });
+    log({ message: `状态: ${result.success ? "成功" : "失败"}` });
+    log({ message: `TraceID: ${result.traceId}` });
+    log({ message: `耗时: ${result.duration.toFixed(2)} 秒` });
 
     if (result.success) {
-      console.log(`输出:`);
-      console.log(typeof result.data === "string" ? result.data : JSON.stringify(result.data, null, 2));
+      log({ message: `输出:` });
+      log({ message: typeof result.data === "string" ? result.data : JSON.stringify(result.data, null, 2) });
     } else {
-      console.error(`错误: ${result.error}`);
+      log({ message: `错误: ${result.error}`, level: 'error' });
     }
 
   } catch (error) {
-    console.error(`测试异常: ${error}`);
+    log({ message: `测试异常: ${error}`, level: 'error' });
   } finally {
     await scheduler.shutdown();
   }
 
-  console.log(`\n=== 测试完成 ===`);
+  log({ message: `\n=== 测试完成 ===` });
 }
 
 // 如果直接运行该文件，执行main函数

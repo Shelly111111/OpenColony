@@ -6,6 +6,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import { log } from './logger';
 
 // 加载环境变量
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -41,8 +42,8 @@ export class LLMClient {
       );
     }
 
-    console.log(`[LLMClient] 使用API端点: ${baseURL || '默认Anthropic API'}`);
-    console.log(`[LLMClient] 使用模型: ${this.model}`);
+    log({ message: `[LLMClient] 使用API端点: ${baseURL || '默认Anthropic API'}` });
+    log({ message: `[LLMClient] 使用模型: ${this.model}` });
     this.client = new Anthropic({
       apiKey,
       baseURL: baseURL || undefined
@@ -67,7 +68,7 @@ export class LLMClient {
     } = options || {};
 
     try {
-      console.log(`[LLMClient] 调用LLM，模型: ${this.model}`);
+      log({ message: `[LLMClient] 调用LLM，模型: ${this.model}` });
 
       const response = await this.client.messages.create({
         model: this.model,
@@ -85,7 +86,7 @@ export class LLMClient {
         .map(block => block.text)
         .join('\n');
 
-      console.log(`[LLMClient] LLM调用成功，输入: ${response.usage?.input_tokens} tokens，输出: ${response.usage?.output_tokens} tokens`);
+      log({ message: `[LLMClient] LLM调用成功，输入: ${response.usage?.input_tokens} tokens，输出: ${response.usage?.output_tokens} tokens` });
 
       return {
         success: true,
@@ -96,7 +97,7 @@ export class LLMClient {
         }
       };
     } catch (error) {
-      console.error(`[LLMClient] LLM调用失败:`, error);
+      log({ message: `[LLMClient] LLM调用失败: ${error}`, level: 'error' });
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error)
@@ -148,8 +149,8 @@ export class LLMClient {
       const data = JSON.parse(jsonStr) as T;
       return { success: true, data };
     } catch (error) {
-      console.error(`[LLMClient] JSON解析失败:`, error);
-      console.error(`[LLMClient] 原始内容:`, jsonStr);
+      log({ message: `[LLMClient] JSON解析失败: ${error}`, level: 'error' });
+      log({ message: `[LLMClient] 原始内容: ${jsonStr}`, level: 'error' });
       return {
         success: false,
         error: `JSON解析失败: ${error instanceof Error ? error.message : String(error)}`

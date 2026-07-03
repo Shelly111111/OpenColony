@@ -5,13 +5,14 @@
 import { PtyBackend } from "../types";
 import { VirtualScreen } from "./virtual-screen";
 import { findGitBashPath } from "../utils/git-bash";
+import { log } from "../utils/logger";
 
 let nodePty: typeof import("node-pty") | null = null;
 
 try {
   nodePty = require("node-pty");
 } catch (e) {
-  console.error("[pty] node-pty 未安装，请运行 npm install node-pty");
+  log({ logFile: undefined, message: "[pty] node-pty 未安装，请运行 npm install node-pty", level: 'error' });
 }
 
 export class NodePtyBackend implements PtyBackend {

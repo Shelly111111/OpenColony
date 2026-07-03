@@ -22,6 +22,7 @@ import {
 import { WorkerManager } from "./worker-manager";
 import { getLLMClient } from "./llm-client";
 import { RoleManager } from "./role-manager";
+import { log } from "./logger";
 
 export class PlanExecutor {
   private config: SchedulerConfig;
@@ -38,24 +39,22 @@ export class PlanExecutor {
    */
   private writePlanLog(masterLogFile: string | undefined, message: string): void {
     if (!masterLogFile) return;
-
-    const logLine = `[${new Date().toISOString()}] ${message}\n`;
-    fs.appendFileSync(masterLogFile, logLine, 'utf-8');
+    log({ logFile: masterLogFile, message, silent: true });
   }
 
   /**
    * 规划任务，拆分子任务并构建DAG
    */
   async planTask(task: MainTask): Promise<PlanOutput> {
-    console.log(`[PlanExecutor] 开始规划任务 ${task.id}`);
+    log({ message: `[PlanExecutor] 开始规划任务 ${task.id}` });
 
     // 调用LLM进行任务拆分
     const subTasks = await this.splitTaskIntoSubTasksWithLLM(task);
-    console.log(`[PlanExecutor] 拆分为 ${subTasks.length} 个子任务`);
+    log({ message: `[PlanExecutor] 拆分为 ${subTasks.length} 个子任务` });
 
     // 构建DAG
     const dag = await this.buildDAG(subTasks);
-    console.log(`[PlanExecutor] DAG构建完成，包含 ${dag.nodes.size} 个节点，${dag.edges.size} 条边`);
+    log({ message: `[PlanExecutor] DAG构建完成，包含 ${dag.nodes.size} 个节点，${dag.edges.size} 条边` });
 
     // 估算执行时间
     const estimatedDuration = this.estimateDuration(subTasks);
@@ -72,7 +71,7 @@ export class PlanExecutor {
    * 执行DAG任务
    */
   async executeDAG(task: MainTask, workerManager: WorkerManager): Promise<WorkerOutput[]> {
-    console.log(`[PlanExecutor] 开始执行DAG任务 ${task.id}`);
+    log({ message: `[PlanExecutor] 开始执行DAG任务 ${task.id}` });
 
     // 写入PlanExecutor日志（使用Master统一日志文件）
     this.writePlanLog(task.masterLogFile, `[PlanExecutor] 开始执行DAG任务 ${task.id}`);
@@ -98,7 +97,7 @@ export class PlanExecutor {
         subTask.status = TaskStatus.RUNNING;
         subTask.startedAt = new Date();
 
-        console.log(`[PlanExecutor] 开始执行子任务 ${subTask.id}: ${subTask.name}`);
+        log({ message: `[PlanExecutor] 开始执行子任务 ${subTask.id}: ${subTask.name}` });
         this.writePlanLog(task.masterLogFile, `[PlanExecutor] 开始执行子任务 ${subTask.id}: ${subTask.name}`);
 
         const output = await workerManager.executeSubTask(subTask, task.traceId, task.logDir);
@@ -112,7 +111,7 @@ export class PlanExecutor {
 
         if (output.status === "fail" && subTask.retryCount < subTask.maxRetries) {
           // 重试逻辑
-          console.log(`[PlanExecutor] 子任务 ${subTask.id} 失败，重试 ${subTask.retryCount + 1}/${subTask.maxRetries}`);
+          log({ message: `[PlanExecutor] 子任务 ${subTask.id} 失败，重试 ${subTask.retryCount + 1}/${subTask.maxRetries}` });
           subTask.retryCount++;
           subTask.status = TaskStatus.RETRYING;
           await this.delay(1000 * Math.pow(2, subTask.retryCount)); // 指数退避
@@ -121,14 +120,14 @@ export class PlanExecutor {
         }
 
       } catch (error) {
-        console.error(`[PlanExecutor] 子任务 ${subTask.id} 执行异常:`, error);
+        log({ message: `[PlanExecutor] 子任务 ${subTask.id} 执行异常: ${error}`, level: 'error' });
         subTask.status = TaskStatus.FAILED;
         subTask.error = error instanceof Error ? error.message : String(error);
         subTask.completedAt = new Date();
 
         // 降级策略：失败的任务如果不是关键路径，继续执行其他任务
         if (!this.isCriticalPathTask(subTask, task.dag)) {
-          console.warn(`[PlanExecutor] 子任务 ${subTask.id} 不在关键路径，继续执行其他任务`);
+          log({ message: `[PlanExecutor] 子任务 ${subTask.id} 不在关键路径，继续执行其他任务`, level: 'warn' });
         } else {
           throw error;
         }
@@ -154,7 +153,7 @@ export class PlanExecutor {
 
       if (readyTasks.length === 0 && executingTasks.size === 0) {
         // 没有可执行的任务且没有在执行的任务，说明有循环依赖或其他问题
-        console.warn(`[PlanExecutor] 没有可执行的任务，退出。已完成: ${completedTasks.size}/${allTaskIds.length}`);
+        log({ message: `[PlanExecutor] 没有可执行的任务，退出。已完成: ${completedTasks.size}/${allTaskIds.length}`, level: 'warn' });
         break;
       }
 
@@ -171,7 +170,7 @@ export class PlanExecutor {
     await executionQueue.onIdle();
     this.executionQueues.delete(task.id);
 
-    console.log(`[PlanExecutor] DAG执行完成，共完成 ${completedTasks.size} 个子任务`);
+    log({ message: `[PlanExecutor] DAG执行完成，共完成 ${completedTasks.size} 个子任务` });
     this.writePlanLog(task.masterLogFile, `[PlanExecutor] DAG执行完成，共完成 ${completedTasks.size} 个子任务`);
     return results;
   }
@@ -200,7 +199,7 @@ export class PlanExecutor {
    * 使用LLM拆分主任务为子任务
    */
   private async splitTaskIntoSubTasksWithLLM(task: MainTask): Promise<SubTask[]> {
-    console.log(`[PlanExecutor] 使用LLM进行任务拆分...`);
+    log({ message: `[PlanExecutor] 使用LLM进行任务拆分...` });
 
     const llm = getLLMClient();
 
@@ -252,9 +251,9 @@ ${roleDescriptions}
       );
     }
 
-    console.log(`[PlanExecutor] LLM任务拆分成功，获得 ${response.data.subTasks.length} 个子任务`);
+    log({ message: `[PlanExecutor] LLM任务拆分成功，获得 ${response.data.subTasks.length} 个子任务` });
     if (response.data.reasoning) {
-      console.log(`[PlanExecutor] 拆分思路: ${response.data.reasoning}`);
+      log({ message: `[PlanExecutor] 拆分思路: ${response.data.reasoning}` });
     }
 
     // 将LLM返回的格式转换为内部格式
@@ -274,7 +273,7 @@ ${roleDescriptions}
       if (role) {
         workerType = llmSubTask.workerType;
       } else {
-        console.warn(`[PlanExecutor] 未知的workerType: ${llmSubTask.workerType}，使用general_agent`);
+        log({ message: `[PlanExecutor] 未知的workerType: ${llmSubTask.workerType}，使用general_agent`, level: 'warn' });
         workerType = 'general_agent';
       }
 

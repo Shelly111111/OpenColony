@@ -6,7 +6,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import * as dotenv from 'dotenv';
 import * as path from 'path';
-import { writeToLog, LOG_DIR } from '../utils/logger';
+import { log, LOG_DIR } from '../utils/logger';
 
 // 加载环境变量（SDK 模式需要）
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -16,7 +16,7 @@ export class ClaudeSDKClient {
 
   constructor() {
     this.model = process.env.ANTHROPIC_MODEL || 'claude-opus-4-6';
-    console.log(`[ClaudeSDKClient] 使用模型: ${this.model}`);
+    log({ logFile: undefined, message: `[ClaudeSDKClient] 使用模型: ${this.model}` });
   }
 
   /**
@@ -27,10 +27,8 @@ export class ClaudeSDKClient {
     sessionId: number,
     logFile: string
   ): Promise<void> {
-    writeToLog(logFile, `使用 Claude Agent SDK 执行命令`);
-    writeToLog(logFile, `执行命令: ${command}`);
-
-    console.log(`[终端${sessionId}] 使用 Agent SDK 执行: "${command}"`);
+    log({ logFile, message: `使用 Claude Agent SDK 执行命令`, sessionId, silent: false });
+    log({ logFile, message: `执行命令: ${command}`, sessionId, silent: false });
 
     try {
       let fullResponse = '';
@@ -64,7 +62,7 @@ export class ClaudeSDKClient {
             } else {
               // 处理错误结果
               const errorReason = resultMsg.subtype || 'unknown';
-              writeToLog(logFile, `执行未完成: ${errorReason}`);
+              log({ logFile, message: `执行未完成: ${errorReason}`, silent: false });
 
               // 使用缓冲的 assistant 消息作为部分结果
               if (assistantMessages.length > 0) {
@@ -84,36 +82,33 @@ export class ClaudeSDKClient {
                 .join('');
               if (textContent) {
                 assistantMessages.push(textContent);
-                writeToLog(logFile, `[Assistant] ${textContent}`);
+                log({ logFile, message: `[Assistant] ${textContent}`, sessionId, silent: false });
               }
 
               // 打印工具使用
               const toolUses = content.filter((block: any) => block.type === 'tool_use');
               for (const toolUse of toolUses) {
                 const toolInfo = `[tool_use] 使用工具:${toolUse.id}，${toolUse.name}:${JSON.stringify(toolUse.input)}`;
-                writeToLog(logFile, toolInfo);
+                log({ logFile, message: toolInfo, sessionId, silent: false });
               }
             }
           }
         }
-        writeToLog(logFile, '');
+        log({ logFile, message: '', silent: true });
       })();
 
       await messagesPromise;
 
       if (fullResponse) {
-        writeToLog(logFile, '执行完成');
-        console.log(`[终端${sessionId}] 执行完成`);
+        log({ logFile, message: '执行完成', sessionId, silent: false });
       } else {
-        writeToLog(logFile, '警告: 未收到有效响应');
-        console.log(`[终端${sessionId}] 警告: 未收到有效响应`);
+        log({ logFile, message: '警告: 未收到有效响应', sessionId, level: 'warn' });
       }
 
     } catch (error) {
       const errorTimestamp = new Date().toISOString();
       const errorMsg = error instanceof Error ? error.message : String(error);
-      writeToLog(logFile, `[错误] ${errorMsg}`);
-      console.error(`[终端${sessionId}] 执行失败: ${errorMsg}`);
+      log({ logFile, message: `[错误] ${errorMsg}`, sessionId, silent: false, level: 'error' });
       throw error;
     }
 

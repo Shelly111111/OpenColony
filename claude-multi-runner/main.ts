@@ -16,6 +16,7 @@
  */
 
 import { ClaudeUnifiedPtyManager, ClaudeRunMode } from "./manager";
+import { log } from "./utils/logger";
 
 function printHelp(): void {
   console.log(`
@@ -72,7 +73,7 @@ async function main(): Promise<void> {
   const terminalCount = parseInt(args[0], 10);
 
   if (isNaN(terminalCount) || terminalCount < 1 || terminalCount > 10) {
-    console.error("\x1b[31m错误: 终端数量必须是 1-10 之间的数字\x1b[0m");
+    log({ logFile: undefined, message: "错误: 终端数量必须是 1-10 之间的数字", level: 'error' });
     printHelp();
     process.exit(1);
   }
@@ -80,7 +81,7 @@ async function main(): Promise<void> {
   const commands = args.slice(1);
 
   if (commands.length === 0) {
-    console.error("\x1b[31m错误: 请提供至少一个命令\x1b[0m");
+    log({ logFile: undefined, message: "错误: 请提供至少一个命令", level: 'error' });
     printHelp();
     process.exit(1);
   }
@@ -97,7 +98,7 @@ async function main(): Promise<void> {
   const manager = new ClaudeUnifiedPtyManager(terminalCount, mode);
 
   process.on("SIGINT", () => {
-    console.log("\n\x1b[33m正在终止所有终端...\x1b[0m");
+    log({ logFile: undefined, message: "正在终止所有终端...", level: 'warn' });
     manager.killAll();
     process.exit(0);
   });
@@ -106,7 +107,7 @@ async function main(): Promise<void> {
     await manager.initialize();
     await manager.runAll(commands);
   } catch (err) {
-    console.error("\x1b[31m执行错误:\x1b[0m", err);
+    log({ logFile: undefined, message: `执行错误: ${err}`, level: 'error' });
     manager.killAll();
     process.exit(1);
   }
