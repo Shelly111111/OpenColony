@@ -144,7 +144,7 @@ export class WorkerManager {
       this.writeLog(logFile, `[${mode.toUpperCase()}] 输出内容:\n${output.substring(0, 2000)}...`);
 
       // 解析输出为标准格式（使用LLM解析混乱的PTY输出）
-      const parsedOutput = await this.parseWorkerOutputWithLLM(output, worker, traceId, logFile);
+      const parsedOutput = await this.parseWorkerOutputWithLLM(output, worker, traceId, logFile, mode);
 
       this.writeLog(logFile, `[RESULT] 解析后的状态: ${parsedOutput.status}`);
       this.writeLog(logFile, `[RESULT] 置信度: ${parsedOutput.confidence}`);
@@ -275,14 +275,28 @@ export class WorkerManager {
   /**
    * 使用LLM解析混乱的PTY输出为JSON格式
    * 作为主解析方法，失败时降级到传统解析
+   * 当mode为sdk时，无需LLM解析，data就是rawOutput
    */
   private async parseWorkerOutputWithLLM(
     rawOutput: string,
     worker: WorkerInstance,
     traceId: string,
-    logFile: string
+    logFile: string,
+    mode: 'sdk' | 'pty'
   ): Promise<WorkerOutput> {
     try {
+      // 如果是 SDK 模式，无需 LLM 解析，直接使用 rawOutput
+      if (mode === 'sdk') {
+        this.writeLog(logFile, `[SDK] 跳过 LLM 解析，直接使用原始输出`);
+        return {
+          status: "success",
+          data: rawOutput,
+          confidence: 1.0,
+          source_agent: worker.type,
+          trace_id: traceId
+        };
+      }
+
       const llmClient = getLLMClient();
 
       const systemPrompt = `你是一个专业输出解析器。用户将提供从PTY终端捕获的Claude CLI输出，其中包含ANSI转义码、终端UI元素、重复内容等混乱信息。
@@ -290,7 +304,7 @@ export class WorkerManager {
 你的任务是：
 1. 从混乱的输出中提取真正有意义的任务执行结果
 2. 忽略ANSI转义码、终端UI、进度指示器、重复内容等噪音
-3. 将提取的结果格式化为有效的JSON
+3. 将提取的结果格式化为有效的JSON，但不要修改原始输出的格式以及有价值的信息
 
 重要：PTY执行完毕表示任务已经成功完成，不要根据输出内容推断状态。
 - status 字段必须固定为 "success"
