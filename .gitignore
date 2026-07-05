@@ -32,3 +32,6 @@ scheduler/README.md
 # Windows system caches
 **/ProgramData/Microsoft/Windows/Caches/
 **/Caches/
+
+.claude/
+.claude/settings.local.json

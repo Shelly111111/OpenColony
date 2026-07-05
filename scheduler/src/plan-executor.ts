@@ -1,6 +1,8 @@
 /**
  * Plan-Executor规划层
  * 负责任务拆分、DAG构建、任务分发与执行
+ * 支持同层任务同步/异步执行控制
+ * 支持多层任务参数传递（上层输出传递到下层输入）
  */
 
 import { v4 as uuidv4 } from "uuid";
@@ -23,15 +25,19 @@ import { WorkerManager } from "./worker-manager";
 import { getLLMClient } from "./llm-client";
 import { RoleManager } from "./role-manager";
 import { log } from "./logger";
+import { loadSettings, AppSettings } from "./config/settings";
 
 export class PlanExecutor {
   private config: SchedulerConfig;
   private executionQueues: Map<string, PQueue> = new Map();
   private roleManager: RoleManager;
+  private settings: AppSettings;
+  private taskOutputs: Map<string, WorkerOutput> = new Map(); // 存储任务输出，用于参数传递
 
   constructor(config: SchedulerConfig) {
     this.config = config;
     this.roleManager = new RoleManager();
+    this.settings = loadSettings(); // 加载设置
   }
 
   /**
@@ -68,111 +74,119 @@ export class PlanExecutor {
   }
 
   /**
-   * 执行DAG任务
+   * 执行DAG任务（增强版）
+   * 支持分层执行和参数传递
    */
   async executeDAG(task: MainTask, workerManager: WorkerManager): Promise<WorkerOutput[]> {
     log({ message: `[PlanExecutor] 开始执行DAG任务 ${task.id}` });
-
-    // 写入PlanExecutor日志（使用Master统一日志文件）
     this.writePlanLog(task.masterLogFile, `[PlanExecutor] 开始执行DAG任务 ${task.id}`);
     this.writePlanLog(task.masterLogFile, `[PlanExecutor] 子任务数量: ${task.subTasks.size}`);
 
-    const executionQueue = new PQueue({ concurrency: this.config.maxWorkers });
-    this.executionQueues.set(task.id, executionQueue);
+    // 清空任务输出缓存
+    this.taskOutputs.clear();
 
     const results: WorkerOutput[] = [];
     const completedTasks = new Set<string>();
     const executingTasks = new Set<string>();
-    const allTaskIds = Array.from(task.subTasks.keys());
 
-    // 执行单个任务的函数
-    const executeSingleTask = async (subTask: SubTask): Promise<void> => {
-      // 防止重复执行
-      if (executingTasks.has(subTask.id) || completedTasks.has(subTask.id)) {
-        return;
-      }
-      executingTasks.add(subTask.id);
+    // 拓扑排序并分层
+    const layers = this.topologicalSortAndLayer(task);
 
-      try {
-        subTask.status = TaskStatus.RUNNING;
-        subTask.startedAt = new Date();
-
-        log({ message: `[PlanExecutor] 开始执行子任务 ${subTask.id}: ${subTask.name}` });
-        this.writePlanLog(task.masterLogFile, `[PlanExecutor] 开始执行子任务 ${subTask.id}: ${subTask.name}`);
-
-        const output = await workerManager.executeSubTask(subTask, task.traceId, task.logDir);
-        subTask.output = output;
-        subTask.status = output.status === "fail" ? TaskStatus.FAILED : TaskStatus.COMPLETED;
-        subTask.completedAt = new Date();
-
-        this.writePlanLog(task.masterLogFile, `[PlanExecutor] 子任务 ${subTask.id} 执行完成，状态: ${output.status}`);
-
-        results.push(output);
-
-        if (output.status === "fail" && subTask.retryCount < subTask.maxRetries) {
-          // 重试逻辑
-          log({ message: `[PlanExecutor] 子任务 ${subTask.id} 失败，重试 ${subTask.retryCount + 1}/${subTask.maxRetries}` });
-          subTask.retryCount++;
-          subTask.status = TaskStatus.RETRYING;
-          await this.delay(1000 * Math.pow(2, subTask.retryCount)); // 指数退避
-          executingTasks.delete(subTask.id);
-          return executeSingleTask(subTask);
-        }
-
-      } catch (error) {
-        log({ message: `[PlanExecutor] 子任务 ${subTask.id} 执行异常: ${error}`, level: 'error' });
-        subTask.status = TaskStatus.FAILED;
-        subTask.error = error instanceof Error ? error.message : String(error);
-        subTask.completedAt = new Date();
-
-        // 降级策略：失败的任务如果不是关键路径，继续执行其他任务
-        if (!this.isCriticalPathTask(subTask, task.dag)) {
-          log({ message: `[PlanExecutor] 子任务 ${subTask.id} 不在关键路径，继续执行其他任务`, level: 'warn' });
-        } else {
-          throw error;
-        }
-      } finally {
-        completedTasks.add(subTask.id);
-        executingTasks.delete(subTask.id);
-      }
-    };
-
-    // 检查依赖是否满足
-    const areDependenciesMet = (subTask: SubTask): boolean => {
-      return subTask.dependencies.every(depId => completedTasks.has(depId));
-    };
-
-    // 主循环：持续寻找可执行的任务直到全部完成或失败
-    while (completedTasks.size < allTaskIds.length) {
-      // 找出所有可以执行的任务（PENDING状态且依赖已满足）
-      const readyTasks = Array.from(task.subTasks.values()).filter(
-        st => st.status === TaskStatus.PENDING &&
-              !executingTasks.has(st.id) &&
-              areDependenciesMet(st)
+    // 按层执行任务
+    for (let i = 0; i < layers.length; i++) {
+      const layer = layers[i];
+      log({
+        message: `[PlanExecutor] 执行第 ${layer.level + 1}/${layers.length} 层任务，共 ${layer.taskIds.length} 个任务，执行方式: ${this.settings.taskExecution.sameLayerAsync ? '异步' : '同步'}`,
+      });
+      this.writePlanLog(
+        task.masterLogFile,
+        `[PlanExecutor] 执行第 ${layer.level + 1}/${layers.length} 层任务，共 ${layer.taskIds.length} 个任务`
       );
 
-      if (readyTasks.length === 0 && executingTasks.size === 0) {
-        // 没有可执行的任务且没有在执行的任务，说明有循环依赖或其他问题
-        log({ message: `[PlanExecutor] 没有可执行的任务，退出。已完成: ${completedTasks.size}/${allTaskIds.length}`, level: 'warn' });
-        break;
+      // 获取当前层的任务
+      const layerTasks = layer.taskIds
+        .map(taskId => task.subTasks.get(taskId))
+        .filter((st): st is SubTask => st !== undefined);
+
+      // 根据设置决定同层任务的执行方式
+      if (this.settings.taskExecution.sameLayerAsync) {
+        // 异步并行执行
+        log({ message: `[PlanExecutor] 同层任务异步并行执行` });
+        await this.executeLayerAsync(layerTasks, task, workerManager, completedTasks, executingTasks, results);
+      } else {
+        // 同步串行执行
+        log({ message: `[PlanExecutor] 同层任务同步串行执行` });
+        await this.executeLayerSync(layerTasks, task, workerManager, completedTasks, executingTasks, results);
       }
 
-      // 启动所有就绪的任务
-      for (const task of readyTasks) {
-        executionQueue.add(() => executeSingleTask(task));
-      }
-
-      // 短暂等待后继续检查
-      await this.delay(100);
+      log({ message: `[PlanExecutor] 第 ${layer.level + 1} 层任务执行完成` });
+      this.writePlanLog(task.masterLogFile, `[PlanExecutor] 第 ${layer.level + 1} 层任务执行完成`);
     }
-
-    // 等待队列中的所有任务完成
-    await executionQueue.onIdle();
-    this.executionQueues.delete(task.id);
 
     log({ message: `[PlanExecutor] DAG执行完成，共完成 ${completedTasks.size} 个子任务` });
     this.writePlanLog(task.masterLogFile, `[PlanExecutor] DAG执行完成，共完成 ${completedTasks.size} 个子任务`);
     return results;
+  }
+
+  /**
+   * 异步并行执行一层任务
+   */
+  private async executeLayerAsync(
+    layerTasks: SubTask[],
+    task: MainTask,
+    workerManager: WorkerManager,
+    completedTasks: Set<string>,
+    executingTasks: Set<string>,
+    results: WorkerOutput[]
+  ): Promise<void> {
+    const maxConcurrency = this.settings.taskExecution.maxConcurrency;
+
+    if (layerTasks.length <= maxConcurrency) {
+      // 并发数不超过限制，直接并行执行
+      await Promise.all(
+        layerTasks.map(async (subTask) => {
+          await this.executeSingleTaskWithParamPassing(subTask, task, workerManager);
+          completedTasks.add(subTask.id);
+          if (subTask.output) {
+            results.push(subTask.output);
+          }
+        })
+      );
+    } else {
+      // 超过并发限制，分批执行
+      for (let i = 0; i < layerTasks.length; i += maxConcurrency) {
+        const batch = layerTasks.slice(i, i + maxConcurrency);
+        await Promise.all(
+          batch.map(async (subTask) => {
+            await this.executeSingleTaskWithParamPassing(subTask, task, workerManager);
+            completedTasks.add(subTask.id);
+            if (subTask.output) {
+              results.push(subTask.output);
+            }
+          })
+        );
+      }
+    }
+  }
+
+  /**
+   * 同步串行执行一层任务
+   */
+  private async executeLayerSync(
+    layerTasks: SubTask[],
+    task: MainTask,
+    workerManager: WorkerManager,
+    completedTasks: Set<string>,
+    executingTasks: Set<string>,
+    results: WorkerOutput[]
+  ): Promise<void> {
+    for (const subTask of layerTasks) {
+      await this.executeSingleTaskWithParamPassing(subTask, task, workerManager);
+      completedTasks.add(subTask.id);
+      if (subTask.output) {
+        results.push(subTask.output);
+      }
+    }
   }
 
   /**
@@ -193,6 +207,178 @@ export class PlanExecutor {
         subTask.error = "任务被手动终止";
       }
     }
+  }
+
+  /**
+   * 拓扑排序并分层
+   * 将任务按依赖关系分成多个层级
+   * 返回按层级分好的任务列表（第0层是最上层，没有依赖的任务）
+   */
+  private topologicalSortAndLayer(task: MainTask): Array<{ level: number; taskIds: string[] }> {
+    const subTasks = Array.from(task.subTasks.values());
+    const dag = task.dag;
+
+    // 构建入度表
+    const inDegree = new Map<string, number>();
+    subTasks.forEach(st => inDegree.set(st.id, 0));
+
+    // 计算入度
+    dag.edges.forEach((targets, source) => {
+      targets.forEach(target => {
+        inDegree.set(target, (inDegree.get(target) || 0) + 1);
+      });
+    });
+
+    // BFS分层（Kahn算法变种）
+    const layers: Array<{ level: number; taskIds: string[] }> = [];
+    const visited = new Set<string>();
+    let currentLayer: string[] = [];
+
+    // 找到所有入度为0的任务（最上层）
+    subTasks.forEach(st => {
+      if ((inDegree.get(st.id) || 0) === 0) {
+        currentLayer.push(st.id);
+      }
+    });
+
+    let level = 0;
+    while (currentLayer.length > 0) {
+      // 记录当前层
+      layers.push({
+        level,
+        taskIds: [...currentLayer],
+      });
+
+      // 处理当前层的每个任务
+      const nextLayer: string[] = [];
+      for (const taskId of currentLayer) {
+        visited.add(taskId);
+        const downstreamTasks = dag.edges.get(taskId) || [];
+        for (const downstreamTaskId of downstreamTasks) {
+          // 减少入度
+          const newDegree = (inDegree.get(downstreamTaskId) || 0) - 1;
+          inDegree.set(downstreamTaskId, newDegree);
+
+          // 如果入度变为0，加入下一层
+          if (newDegree === 0 && !visited.has(downstreamTaskId)) {
+            nextLayer.push(downstreamTaskId);
+          }
+        }
+      }
+
+      currentLayer = nextLayer;
+      level++;
+    }
+
+    // 检查是否有环
+    if (visited.size !== subTasks.length) {
+      throw new Error('DAG中存在循环依赖！');
+    }
+
+    log({ message: `[PlanExecutor] 拓扑排序完成，共 ${layers.length} 层` });
+    layers.forEach(layer => {
+      const taskNames = layer.taskIds.map(id => {
+        const st = task.subTasks.get(id);
+        return st ? st.name : id;
+      });
+      log({
+        message: `  第${layer.level + 1}层: ${taskNames.join(', ')} (${this.settings.taskExecution.sameLayerAsync ? '异步' : '同步'})`,
+      });
+    });
+
+    return layers;
+  }
+
+  /**
+   * 执行单个任务（增强版，支持参数传递）
+   * 注意：此方法假设依赖已经满足（由分层执行逻辑保证）
+   */
+  private async executeSingleTaskWithParamPassing(
+    subTask: SubTask,
+    task: MainTask,
+    workerManager: WorkerManager
+  ): Promise<void> {
+    try {
+      subTask.status = TaskStatus.RUNNING;
+      subTask.startedAt = new Date();
+
+      log({ message: `[PlanExecutor] 开始执行子任务 ${subTask.id}: ${subTask.name}` });
+      this.writePlanLog(task.masterLogFile, `[PlanExecutor] 开始执行子任务 ${subTask.id}: ${subTask.name}`);
+
+      // 在执行前，构建包含依赖任务输出的命令
+      if (subTask.dependencies.length > 0) {
+        const enhancedCommand = this.buildEnhancedCommand(subTask, task);
+        subTask.command = enhancedCommand;
+      }
+
+      const output = await workerManager.executeSubTask(subTask, task.traceId, task.logDir);
+      subTask.output = output;
+      subTask.status = output.status === "fail" ? TaskStatus.FAILED : TaskStatus.COMPLETED;
+      subTask.completedAt = new Date();
+
+      // 存储任务输出，用于参数传递
+      if (output.status === "success") {
+        this.taskOutputs.set(subTask.id, output);
+      }
+
+      this.writePlanLog(task.masterLogFile, `[PlanExecutor] 子任务 ${subTask.id} 执行完成，状态: ${output.status}`);
+
+      if (output.status === "fail" && subTask.retryCount < subTask.maxRetries) {
+        // 重试逻辑
+        log({ message: `[PlanExecutor] 子任务 ${subTask.id} 失败，重试 ${subTask.retryCount + 1}/${subTask.maxRetries}` });
+        subTask.retryCount++;
+        subTask.status = TaskStatus.RETRYING;
+        await this.delay(1000 * Math.pow(2, subTask.retryCount)); // 指数退避
+        return this.executeSingleTaskWithParamPassing(subTask, task, workerManager);
+      }
+
+    } catch (error) {
+      log({ message: `[PlanExecutor] 子任务 ${subTask.id} 执行异常: ${error}`, level: 'error' });
+      subTask.status = TaskStatus.FAILED;
+      subTask.error = error instanceof Error ? error.message : String(error);
+      subTask.completedAt = new Date();
+
+      // 降级策略：失败的任务如果不是关键路径，继续执行其他任务
+      if (!this.isCriticalPathTask(subTask, task.dag)) {
+        log({ message: `[PlanExecutor] 子任务 ${subTask.id} 不在关键路径，继续执行其他任务`, level: 'warn' });
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * 构建增强命令（包含依赖任务的输出）
+   */
+  private buildEnhancedCommand(subTask: SubTask, task: MainTask): string {
+    // 如果没有依赖，直接返回原命令
+    if (subTask.dependencies.length === 0) {
+      return subTask.command;
+    }
+
+    // 收集依赖任务的输出
+    const dependencyOutputs: string[] = [];
+    for (const depId of subTask.dependencies) {
+      const depOutput = this.taskOutputs.get(depId);
+      if (depOutput && depOutput.status === "success") {
+        const depTask = task.subTasks.get(depId);
+        const depName = depTask ? depTask.name : depId;
+        const outputData = typeof depOutput.data === 'string'
+          ? depOutput.data
+          : JSON.stringify(depOutput.data, null, 2);
+
+        dependencyOutputs.push(`\n\n## 依赖任务 "${depName}" 的输出:\n${outputData}`);
+      }
+    }
+
+    // 将依赖输出追加到命令中
+    if (dependencyOutputs.length > 0) {
+      const enhancedCommand = subTask.command + '\n' + dependencyOutputs.join('\n');
+      log({ message: `[PlanExecutor] 为任务 ${subTask.name} 添加依赖输出，依赖数量: ${dependencyOutputs.length}` });
+      return enhancedCommand;
+    }
+
+    return subTask.command;
   }
 
   /**

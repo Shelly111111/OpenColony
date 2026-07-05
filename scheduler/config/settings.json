@@ -1,0 +1,22 @@
+{
+  "taskExecution": {
+    "sameLayerAsync": true,
+    "maxConcurrency": 5,
+    "taskTimeout": 600000
+  },
+  "dagScheduling": {
+    "enabled": true,
+    "autoDetectDependencies": false,
+    "onFailure": "stop-all"
+  },
+  "logging": {
+    "verbose": false,
+    "logDir": "./logs",
+    "saveTaskOutput": true
+  },
+  "retry": {
+    "enableRetry": false,
+    "maxRetries": 3,
+    "retryDelay": 1000
+  }
+}
