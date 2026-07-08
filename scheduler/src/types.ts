@@ -16,6 +16,7 @@ export interface LLMPlanResponse {
   subTasks: LLMPlanSubTask[];
   estimatedDuration?: number;
   reasoning?: string;
+  condensedRequest?: string;
 }
 
 // ==================== 基础枚举 ====================
@@ -98,6 +99,7 @@ export interface MainTask {
   name: string;
   description: string;
   userRequest: string;
+  condensedRequest?: string;
   constraints: string[];
   deliveryStandards: string[];
   priority: TaskPriority;

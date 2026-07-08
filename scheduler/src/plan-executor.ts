@@ -440,7 +440,8 @@ ${roleDescriptions}
     }
   ],
   "estimatedDuration": 1800,  // 预估总时间（秒）
-  "reasoning": "拆分思路说明"
+  "reasoning": "拆分思路说明",
+  "condensedRequest": "需求摘要：用100-300字精炼概括用户需求的核心内容、关键约束和交付标准，便于子任务执行者快速理解整体目标"
 }
 
 只返回JSON，不要包含其他文本。`;
@@ -467,6 +468,10 @@ ${roleDescriptions}
     log({ message: `[PlanExecutor] LLM任务拆分成功，获得 ${response.data.subTasks.length} 个子任务` });
     if (response.data.reasoning) {
       log({ message: `[PlanExecutor] 拆分思路: ${response.data.reasoning}` });
+    }
+
+    if (response.data.condensedRequest) {
+      task.condensedRequest = response.data.condensedRequest;
     }
 
     // 将LLM返回的格式转换为内部格式
@@ -529,7 +534,7 @@ ${roleDescriptions}
     const systemPrompt = role ? role.systemPrompt : '';
 
     // 精简用户需求：提取关键信息
-    const condensedRequest = this.condenseUserRequest(parentTask.userRequest);
+    const condensedRequest = this.condenseUserRequest(parentTask);
 
     // 构建命令：systemPrompt + 任务信息 + 原始需求 + 执行要求
     const parts: string[] = [];
@@ -562,10 +567,16 @@ ${roleDescriptions}
   /**
    * 精简用户需求：提取关键信息，避免prompt过长
    */
-  private condenseUserRequest(fullRequest: string): string {
+  private condenseUserRequest(task: MainTask): string {
+    const fullRequest = task.userRequest;
     // 如果需求较短，直接返回
     if (fullRequest.length <= 500) {
       return fullRequest;
+    }
+
+    // 如果有LLM生成的摘要，直接返回
+    if (task.condensedRequest) {
+      return task.condensedRequest;
     }
 
     // 否则提取前300字符作为摘要，并添加提示
