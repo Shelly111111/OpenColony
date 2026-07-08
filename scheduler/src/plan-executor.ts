@@ -543,7 +543,7 @@ ${roleDescriptions}
 
     // 否则提取前300字符作为摘要，并添加提示
     const summary = fullRequest.substring(0, 300);
-    return `${summary}...\n\n[需求摘要] 这是一个与OpenColony项目相关的任务，请结合项目实际情况执行。`;
+    return `[需求摘要] ${summary}...\n`;
   }
 
   /**
