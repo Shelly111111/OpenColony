@@ -39,24 +39,61 @@ export class WorkerManager {
   }
 
   /**
+   * 创建Worker实例（公共方法，允许预创建）
+   */
+  async createWorker(workerType: string, logDir?: string): Promise<WorkerInstance> {
+    for (const worker of this.workers.values()) {
+      if (worker.status === "idle" && worker.type === workerType) {
+        log({ message: `[WorkerManager] 复用现有Worker ${worker.id}，类型: ${workerType}` });
+        return worker;
+      }
+    }
+
+    const workerId = uuidv4();
+    const worker: WorkerInstance = {
+      id: workerId,
+      type: workerType,
+      status: "idle",
+      createdAt: new Date()
+    };
+
+    if (logDir) {
+      const logFileName = `WorkerManager_${workerId}.log`;
+      worker.logFile = path.join(logDir, logFileName);
+      this.writeLog(worker.logFile, `[WorkerManager] 创建Worker ${workerId}，类型: ${workerType}`);
+    }
+
+    this.workers.set(workerId, worker);
+    log({ message: `[WorkerManager] 创建新Worker ${workerId}，类型: ${workerType}` });
+
+    return worker;
+  }
+
+  /**
+   * 释放Worker实例
+   */
+  releaseWorker(workerId: string): void {
+    this.workers.delete(workerId);
+    log({ message: `[WorkerManager] 释放Worker实例: ${workerId}` });
+  }
+
+  /**
    * 执行单个子任务（根据配置选择模式）
    * 两种模式都使用 ClaudeUnifiedPtyManager
+   * @param worker 可选：已创建的Worker实例
    */
-  async executeSubTask(subTask: SubTask, traceId: string, logDir?: string): Promise<WorkerOutput> {
+  async executeSubTask(subTask: SubTask, traceId: string, logDir?: string, worker?: WorkerInstance): Promise<WorkerOutput> {
     log({ message: `[WorkerManager] 分配子任务 ${subTask.id} 到Worker，类型: ${subTask.workerType}，模式: ${this.runMode}` });
 
-    // 创建Worker实例
-    const worker = await this.createWorker(subTask.workerType, logDir);
-    worker.currentTaskId = subTask.id;
-    worker.status = "busy";
+    const targetWorker = worker || await this.createWorker(subTask.workerType, logDir);
+    targetWorker.currentTaskId = subTask.id;
+    targetWorker.status = "busy";
 
-    // 使用Worker自己的日志文件（一个Worker一个日志文件）
-    const logFile = worker.logFile || path.join(logDir || this.createLogDirectory(traceId), `WorkerManager_${worker.id}.log`);
-    worker.logFile = logFile;
+    const logFile = targetWorker.logFile || path.join(logDir || this.createLogDirectory(traceId), `WorkerManager_${targetWorker.id}.log`);
+    targetWorker.logFile = logFile;
 
     try {
-      // 两种模式都使用 ClaudeUnifiedPtyManager
-      const result = await this.runTaskWithManager(worker, subTask, traceId, logFile, this.runMode);
+      const result = await this.runTaskWithManager(targetWorker, subTask, traceId, logFile, this.runMode);
 
       log({ message: `[WorkerManager] 子任务 ${subTask.id} 执行完成，状态: ${result.status}` });
 
@@ -68,15 +105,14 @@ export class WorkerManager {
         status: "fail",
         data: null,
         confidence: 0,
-        source_agent: worker.type,
+        source_agent: targetWorker.type,
         trace_id: traceId,
         error: error instanceof Error ? error.message : String(error)
       };
     } finally {
-      // 重置Worker状态
-      worker.status = "idle";
-      worker.currentTaskId = undefined;
-      worker.lastUsedAt = new Date();
+      targetWorker.status = "idle";
+      targetWorker.currentTaskId = undefined;
+      targetWorker.lastUsedAt = new Date();
     }
   }
 
@@ -235,41 +271,6 @@ export class WorkerManager {
     }
 
     return fullPath;
-  }
-
-  /**
-   * 创建Worker实例
-   */
-  private async createWorker(workerType: string, logDir?: string): Promise<WorkerInstance> {
-    // 查找空闲Worker
-    for (const worker of this.workers.values()) {
-      if (worker.status === "idle" && worker.type === workerType) {
-        log({ message: `[WorkerManager] 复用现有Worker ${worker.id}，类型: ${workerType}` });
-        return worker;
-      }
-    }
-
-    // 创建新Worker
-    const workerId = uuidv4();
-
-    const worker: WorkerInstance = {
-      id: workerId,
-      type: workerType,
-      status: "idle",
-      createdAt: new Date()
-    };
-
-    // 为新Worker创建日志文件（一个Worker一个日志文件）
-    if (logDir) {
-      const logFileName = `WorkerManager_${workerId}.log`;
-      worker.logFile = path.join(logDir, logFileName);
-      this.writeLog(worker.logFile, `[WorkerManager] 创建Worker ${workerId}，类型: ${workerType}`);
-    }
-
-    this.workers.set(workerId, worker);
-    log({ message: `[WorkerManager] 创建新Worker ${workerId}，类型: ${workerType}` });
-
-    return worker;
   }
 
   /**

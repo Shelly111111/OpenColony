@@ -87,6 +87,7 @@ export interface SubTask {
   startedAt?: Date;
   completedAt?: Date;
   assignedWorkerId?: string;
+  worker?: WorkerInstance; // 关联的Worker实例
 }
 
 /**
@@ -190,4 +191,65 @@ export interface ArbitrationResult {
   conflicts?: string[];
   requiresUserInput: boolean;
   userPrompt?: string;
+}
+
+// ==================== ClaudeLink 通信相关类型 ====================
+
+/**
+ * 消息优先级
+ */
+export enum MessagePriority {
+  HIGH = "high",
+  NORMAL = "normal",
+  LOW = "low"
+}
+
+/**
+ * 消息状态
+ */
+export enum MessageStatus {
+  PENDING = "pending",
+  SENT = "sent",
+  RECEIVED = "received",
+  PROCESSED = "processed",
+  EXPIRED = "expired"
+}
+
+/**
+ * 消息定义
+ */
+export interface Message {
+  id: string;
+  fromWorkerId: string;
+  toWorkerId: string;
+  content: string;
+  priority: MessagePriority;
+  status: MessageStatus;
+  context?: Record<string, any>;
+  createdAt: Date;
+  sentAt?: Date;
+  receivedAt?: Date;
+  processedAt?: Date;
+  ttl?: number; // 过期时间（秒）
+  retryCount?: number;
+}
+
+/**
+ * Worker 状态信息
+ */
+export interface WorkerStatusInfo {
+  workerId: string;
+  type: string;
+  status: "idle" | "busy" | "error";
+  currentTaskId?: string;
+  lastActiveAt?: Date;
+}
+
+/**
+ * ClaudeLink 配置
+ */
+export interface ClaudeLinkConfig {
+  dbPath?: string;
+  messageRetentionDays?: number;
+  sendRateLimitMs?: number;
 }

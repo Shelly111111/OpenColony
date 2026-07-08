@@ -19,13 +19,15 @@ import {
   WorkerOutput,
   SchedulerConfig,
   LLMPlanResponse,
-  LLMPlanSubTask
+  LLMPlanSubTask,
+  WorkerInstance
 } from "./types";
 import { WorkerManager } from "./worker-manager";
 import { getLLMClient } from "./llm-client";
 import { RoleManager } from "./role-manager";
 import { log } from "./logger";
 import { loadSettings, AppSettings } from "./config/settings";
+import { ClaudeLink } from "./claude-link";
 
 export class PlanExecutor {
   private config: SchedulerConfig;
@@ -103,20 +105,43 @@ export class PlanExecutor {
         `[PlanExecutor] 执行第 ${layer.level + 1}/${layers.length} 层任务，共 ${layer.taskIds.length} 个任务`
       );
 
-      // 获取当前层的任务
       const layerTasks = layer.taskIds
         .map(taskId => task.subTasks.get(taskId))
         .filter((st): st is SubTask => st !== undefined);
 
+      // 为当前层所有任务预创建Worker
+      const layerWorkers = await Promise.all(
+        layerTasks.map(subTask => workerManager.createWorker(subTask.workerType, task.logDir))
+      );
+      log({ message: `[PlanExecutor] 为第 ${layer.level + 1} 层创建了 ${layerWorkers.length} 个Worker` });
+
+      // 将Worker关联到对应的SubTask
+      for (let i = 0; i < layerTasks.length; i++) {
+        layerTasks[i].worker = layerWorkers[i];
+      }
+
+      // 注册Worker到ClaudeLink
+      const claudeLink = ClaudeLink.getInstance();
+      for (const worker of layerWorkers) {
+        claudeLink.registerWorker(worker);
+      }
+
+      // 注入同层团队信息（排除自身）
+      this.injectLayerTeamInfo(layerTasks, task);
+
       // 根据设置决定同层任务的执行方式
       if (this.settings.taskExecution.sameLayerAsync) {
-        // 异步并行执行
         log({ message: `[PlanExecutor] 同层任务异步并行执行` });
-        await this.executeLayerAsync(layerTasks, task, workerManager, completedTasks, executingTasks, results);
+        await this.executeLayerAsync(layerTasks, layerWorkers, task, workerManager, completedTasks, executingTasks, results);
       } else {
-        // 同步串行执行
         log({ message: `[PlanExecutor] 同层任务同步串行执行` });
-        await this.executeLayerSync(layerTasks, task, workerManager, completedTasks, executingTasks, results);
+        await this.executeLayerSync(layerTasks, layerWorkers, task, workerManager, completedTasks, executingTasks, results);
+      }
+
+      // 清理Worker
+      for (const w of layerWorkers) {
+        claudeLink.unregisterWorker(w.id);
+        workerManager.releaseWorker(w.id);
       }
 
       log({ message: `[PlanExecutor] 第 ${layer.level + 1} 层任务执行完成` });
@@ -133,6 +158,7 @@ export class PlanExecutor {
    */
   private async executeLayerAsync(
     layerTasks: SubTask[],
+    layerWorkers: WorkerInstance[],
     task: MainTask,
     workerManager: WorkerManager,
     completedTasks: Set<string>,
@@ -142,10 +168,10 @@ export class PlanExecutor {
     const maxConcurrency = this.settings.taskExecution.maxConcurrency;
 
     if (layerTasks.length <= maxConcurrency) {
-      // 并发数不超过限制，直接并行执行
       await Promise.all(
-        layerTasks.map(async (subTask) => {
-          await this.executeSingleTaskWithParamPassing(subTask, task, workerManager);
+        layerTasks.map(async (subTask, index) => {
+          const worker = layerWorkers[index];
+          await this.executeSingleTaskWithParamPassing(subTask, task, workerManager, worker);
           completedTasks.add(subTask.id);
           if (subTask.output) {
             results.push(subTask.output);
@@ -153,12 +179,13 @@ export class PlanExecutor {
         })
       );
     } else {
-      // 超过并发限制，分批执行
       for (let i = 0; i < layerTasks.length; i += maxConcurrency) {
         const batch = layerTasks.slice(i, i + maxConcurrency);
+        const workerBatch = layerWorkers.slice(i, i + maxConcurrency);
         await Promise.all(
-          batch.map(async (subTask) => {
-            await this.executeSingleTaskWithParamPassing(subTask, task, workerManager);
+          batch.map(async (subTask, index) => {
+            const worker = workerBatch[index];
+            await this.executeSingleTaskWithParamPassing(subTask, task, workerManager, worker);
             completedTasks.add(subTask.id);
             if (subTask.output) {
               results.push(subTask.output);
@@ -174,14 +201,17 @@ export class PlanExecutor {
    */
   private async executeLayerSync(
     layerTasks: SubTask[],
+    layerWorkers: WorkerInstance[],
     task: MainTask,
     workerManager: WorkerManager,
     completedTasks: Set<string>,
     executingTasks: Set<string>,
     results: WorkerOutput[]
   ): Promise<void> {
-    for (const subTask of layerTasks) {
-      await this.executeSingleTaskWithParamPassing(subTask, task, workerManager);
+    for (let i = 0; i < layerTasks.length; i++) {
+      const subTask = layerTasks[i];
+      const worker = layerWorkers[i];
+      await this.executeSingleTaskWithParamPassing(subTask, task, workerManager, worker);
       completedTasks.add(subTask.id);
       if (subTask.output) {
         results.push(subTask.output);
@@ -296,7 +326,8 @@ export class PlanExecutor {
   private async executeSingleTaskWithParamPassing(
     subTask: SubTask,
     task: MainTask,
-    workerManager: WorkerManager
+    workerManager: WorkerManager,
+    worker?: WorkerInstance
   ): Promise<void> {
     try {
       subTask.status = TaskStatus.RUNNING;
@@ -305,18 +336,16 @@ export class PlanExecutor {
       log({ message: `[PlanExecutor] 开始执行子任务 ${subTask.id}: ${subTask.name}` });
       this.writePlanLog(task.masterLogFile, `[PlanExecutor] 开始执行子任务 ${subTask.id}: ${subTask.name}`);
 
-      // 在执行前，构建包含依赖任务输出的命令
       if (subTask.dependencies.length > 0) {
         const enhancedCommand = this.buildEnhancedCommand(subTask, task);
         subTask.command = enhancedCommand;
       }
 
-      const output = await workerManager.executeSubTask(subTask, task.traceId, task.logDir);
+      const output = await workerManager.executeSubTask(subTask, task.traceId, task.logDir, worker);
       subTask.output = output;
       subTask.status = output.status === "fail" ? TaskStatus.FAILED : TaskStatus.COMPLETED;
       subTask.completedAt = new Date();
 
-      // 存储任务输出，用于参数传递
       if (output.status === "success") {
         this.taskOutputs.set(subTask.id, output);
       }
@@ -324,12 +353,11 @@ export class PlanExecutor {
       this.writePlanLog(task.masterLogFile, `[PlanExecutor] 子任务 ${subTask.id} 执行完成，状态: ${output.status}`);
 
       if (output.status === "fail" && subTask.retryCount < subTask.maxRetries) {
-        // 重试逻辑
         log({ message: `[PlanExecutor] 子任务 ${subTask.id} 失败，重试 ${subTask.retryCount + 1}/${subTask.maxRetries}` });
         subTask.retryCount++;
         subTask.status = TaskStatus.RETRYING;
-        await this.delay(1000 * Math.pow(2, subTask.retryCount)); // 指数退避
-        return this.executeSingleTaskWithParamPassing(subTask, task, workerManager);
+        await this.delay(1000 * Math.pow(2, subTask.retryCount));
+        return this.executeSingleTaskWithParamPassing(subTask, task, workerManager, worker);
       }
 
     } catch (error) {
@@ -338,7 +366,6 @@ export class PlanExecutor {
       subTask.error = error instanceof Error ? error.message : String(error);
       subTask.completedAt = new Date();
 
-      // 降级策略：失败的任务如果不是关键路径，继续执行其他任务
       if (!this.isCriticalPathTask(subTask, task.dag)) {
         log({ message: `[PlanExecutor] 子任务 ${subTask.id} 不在关键路径，继续执行其他任务`, level: 'warn' });
       } else {
@@ -630,5 +657,58 @@ ${roleDescriptions}
    */
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * 为当前层任务注入同层团队信息
+   * 排除当前Worker自身
+   */
+  private injectLayerTeamInfo(layerTasks: SubTask[], task: MainTask): void {
+    if (layerTasks.length <= 1) {
+      return;
+    }
+
+    for (const subTask of layerTasks) {
+      const teamInfo = this.buildLayerTeamInfo(subTask, layerTasks);
+      subTask.command += '\n\n' + teamInfo;
+    }
+
+    log({ message: `[PlanExecutor] 为当前层的 ${layerTasks.length} 个任务注入团队信息（排除自身）` });
+  }
+
+  /**
+   * 构建同层团队信息（排除当前Worker）
+   */
+  private buildLayerTeamInfo(currentTask: SubTask, layerTasks: SubTask[]): string {
+    const lines: string[] = [];
+    lines.push('## 同层团队成员');
+    lines.push('当前层有以下 Worker 正在并行执行任务，你可以与他们协作：');
+    lines.push('');
+
+    // 添加同层其他Worker（排除自身）
+    for (const subTask of layerTasks) {
+      if (subTask.id === currentTask.id) {
+        continue;
+      }
+
+      const worker = subTask.worker;
+      if (!worker) {
+        continue;
+      }
+
+      const role = this.roleManager.getRole(subTask.workerType);
+      const roleName = role ? role.name : subTask.workerType;
+
+      lines.push(`- **${worker.id}** (${roleName})：${subTask.description}`);
+    }
+
+    lines.push('');
+    lines.push('你可以使用以下协作指令与同层 Worker 通信：');
+    lines.push('- [[SEND_TO: worker_id, message_content]] - 发送私信');
+    lines.push('- [[SEND_TO_HIGH: worker_id, message_content]] - 发送高优先级消息（目标Worker会立即暂停并处理）');
+    lines.push('- [[BROADCAST: message_content]] - 广播给所有同层 Worker');
+    lines.push('- [[ASK_HELP: worker_id, task_description]] - 请求协作帮助');
+
+    return lines.join('\n');
   }
 }
