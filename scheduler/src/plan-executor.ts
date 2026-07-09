@@ -714,11 +714,8 @@ ${roleDescriptions}
     }
 
     lines.push('');
-    lines.push('你可以使用以下协作指令与同层 Worker 通信：');
-    lines.push('- [[SEND_TO: worker_id, message_content]] - 发送私信');
-    lines.push('- [[SEND_TO_HIGH: worker_id, message_content]] - 发送高优先级消息（目标Worker会立即暂停并处理）');
-    lines.push('- [[BROADCAST: message_content]] - 广播给所有同层 Worker');
-    lines.push('- [[ASK_HELP: worker_id, task_description]] - 请求协作帮助');
+    lines.push('如需与其他 Worker 协作，请阅读技能文件: `.claude/skills/worker-communication.md`');
+    lines.push('系统已为你配备 `worker-collaboration` 工具集，你可以像使用内置工具一样调用。');
 
     return lines.join('\n');
   }

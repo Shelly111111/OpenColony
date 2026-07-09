@@ -206,6 +206,8 @@ export class ClaudeUnifiedPtyManager {
       this.activeCount++;
 
       try {
+        const workerId = `worker-${sessionId}`;
+        this.sdkClient!.setWorkerId(workerId);
         await this.sdkClient!.executeCommand(command, sessionId, session.logFile);
         session.status = "completed";
         this.activeCount--;
