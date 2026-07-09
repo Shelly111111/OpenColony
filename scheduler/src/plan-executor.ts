@@ -120,14 +120,18 @@ export class PlanExecutor {
         layerTasks[i].worker = layerWorkers[i];
       }
 
-      // 注册Worker到ClaudeLink
-      const claudeLink = ClaudeLink.getInstance();
-      for (const worker of layerWorkers) {
-        claudeLink.registerWorker(worker);
-      }
+      // 只有SDK模式才启用协作功能
+      const isSDKMode = workerManager.runMode === 'sdk';
+      const claudeLink = isSDKMode ? ClaudeLink.getInstance() : null;
 
-      // 注入同层团队信息（排除自身）
-      this.injectLayerTeamInfo(layerTasks, task);
+      if (isSDKMode) {
+        for (const worker of layerWorkers) {
+          claudeLink!.registerWorker(worker);
+        }
+        log({ message: `[PlanExecutor] SDK模式：注册 ${layerWorkers.length} 个Worker到ClaudeLink` });
+        // 注入同层团队信息（只有SDK模式）
+        this.injectLayerTeamInfo(layerTasks, task);
+      }
 
       // 根据设置决定同层任务的执行方式
       if (this.settings.taskExecution.sameLayerAsync) {
@@ -140,7 +144,9 @@ export class PlanExecutor {
 
       // 清理Worker
       for (const w of layerWorkers) {
-        claudeLink.unregisterWorker(w.id);
+        if (isSDKMode) {
+          claudeLink!.unregisterWorker(w.id);
+        }
         workerManager.releaseWorker(w.id);
       }
 
@@ -671,24 +677,26 @@ ${roleDescriptions}
   }
 
   /**
-   * 为当前层任务注入同层团队信息
-   * 排除当前Worker自身
+   * 为当前层任务注入同层团队信息和协作技能引用
    */
   private injectLayerTeamInfo(layerTasks: SubTask[], task: MainTask): void {
-    if (layerTasks.length <= 1) {
-      return;
-    }
+    const hasTeammates = layerTasks.length > 1;
 
     for (const subTask of layerTasks) {
-      const teamInfo = this.buildLayerTeamInfo(subTask, layerTasks);
+      let teamInfo = this.buildCollaborationSkillReference();
+
+      if (hasTeammates) {
+        teamInfo += '\n\n' + this.buildLayerTeamInfo(subTask, layerTasks);
+      }
+
       subTask.command += '\n\n' + teamInfo;
     }
 
-    log({ message: `[PlanExecutor] 为当前层的 ${layerTasks.length} 个任务注入团队信息（排除自身）` });
+    log({ message: `[PlanExecutor] 为当前层的 ${layerTasks.length} 个任务注入协作信息` });
   }
 
   /**
-   * 构建同层团队信息（排除当前Worker）
+   * 构建同层团队成员列表（排除当前Worker）
    */
   private buildLayerTeamInfo(currentTask: SubTask, layerTasks: SubTask[]): string {
     const lines: string[] = [];
@@ -696,7 +704,6 @@ ${roleDescriptions}
     lines.push('当前层有以下 Worker 正在并行执行任务，你可以与他们协作：');
     lines.push('');
 
-    // 添加同层其他Worker（排除自身）
     for (const subTask of layerTasks) {
       if (subTask.id === currentTask.id) {
         continue;
@@ -713,10 +720,17 @@ ${roleDescriptions}
       lines.push(`- **${worker.id}** (${roleName})：${subTask.description}`);
     }
 
-    lines.push('');
-    lines.push('如需与其他 Worker 协作，请阅读技能文件: `.claude/skills/worker-communication.md`');
-    lines.push('系统已为你配备 `worker-collaboration` 工具集，你可以像使用内置工具一样调用。');
+    return lines.join('\n');
+  }
 
+  /**
+   * 构建协作技能文件引用（始终注入）
+   */
+  private buildCollaborationSkillReference(): string {
+    const lines: string[] = [];
+    lines.push('## 协作技能');
+    lines.push('系统已为你配备 `worker-collaboration` 工具集，可用于与其他 Worker 通讯协作。');
+    lines.push('详细使用说明请阅读技能文件: `.claude/skills/worker-communication.md`');
     return lines.join('\n');
   }
 }

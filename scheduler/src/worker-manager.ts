@@ -26,11 +26,11 @@ export class WorkerManager {
   private config: SchedulerConfig;
   private workers: Map<string, WorkerInstance> = new Map();
   private nextSessionId: number = 1;
-  private runMode: 'sdk' | 'pty' = 'pty'; // 默认PTY模式
+  runMode: 'sdk' | 'pty' = 'sdk'; // 默认SDK模式
 
   constructor(config: SchedulerConfig) {
     this.config = config;
-    this.runMode = config.runMode || 'pty'; // 从配置中获取运行模式
+    this.runMode = config.runMode || 'sdk'; // 从配置中获取运行模式
 
     // 确保日志根目录存在
     if (!fs.existsSync(WORKER_LOG_ROOT)) {
