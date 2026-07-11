@@ -122,11 +122,14 @@ export class MessageDB {
   }
 
   cleanupExpiredMessages(retentionDays: number = 7): void {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+
     const stmt = this.db.prepare(`
       DELETE FROM messages 
-      WHERE strftime('%s', 'now') - strftime('%s', created_at) > ? * 86400
+      WHERE created_at < ?
     `);
-    stmt.run(retentionDays);
+    stmt.run(cutoffDate.toISOString());
   }
 
   getAllMessages(): Message[] {

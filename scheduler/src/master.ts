@@ -21,6 +21,7 @@ import {
 import { PlanExecutor } from "./plan-executor";
 import { WorkerManager } from "./worker-manager";
 import { ArbitrationEngine } from "./arbitration-engine";
+import { ClaudeLink } from "./claude-link";
 import { getLLMClient } from "./llm-client";
 import { log } from "./logger";
 
@@ -332,6 +333,7 @@ ${outputStr}
   async shutdown(): Promise<void> {
     log({ message: `[Master] 正在关闭调度器...` });
     await this.workerManager.shutdown();
+    ClaudeLink.getInstance().shutdown();
     log({ message: `[Master] 调度器已关闭` });
   }
 }

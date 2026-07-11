@@ -9,6 +9,7 @@ export class ClaudeLink extends EventEmitter {
   private workers: Map<string, WorkerInstance> = new Map();
   private config: ClaudeLinkConfig;
   private static instance: ClaudeLink | null = null;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   private constructor(config?: ClaudeLinkConfig) {
     super();
@@ -20,8 +21,12 @@ export class ClaudeLink extends EventEmitter {
 
     this.db = new MessageDB(this.config.dbPath);
 
-    setInterval(() => {
-      this.db.cleanupExpiredMessages(this.config.messageRetentionDays);
+    this.cleanupTimer = setInterval(() => {
+      try {
+        this.db.cleanupExpiredMessages(this.config.messageRetentionDays);
+      } catch (error) {
+        log({ message: `[ClaudeLink] 清理过期消息失败: ${error}`, level: 'error' });
+      }
     }, 60000);
   }
 
@@ -161,9 +166,14 @@ export class ClaudeLink extends EventEmitter {
   }
 
   public shutdown(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
     this.removeAllListeners();
     this.db.close();
     this.workers.clear();
+    ClaudeLink.instance = null;
     log({ message: "[ClaudeLink] 通信总线已关闭" });
   }
 }

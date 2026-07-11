@@ -89,6 +89,21 @@ async function runDefaultMode(mode: 'sdk' | 'pty' = 'sdk', userRequest?: string)
     runMode: mode // 设置运行模式
   });
 
+  let shutdownResolve: (() => void) | null = null;
+  const shutdownPromise = new Promise<void>((resolve) => {
+    shutdownResolve = resolve;
+  });
+
+  const handleShutdown = async () => {
+    log({ message: `收到停止信号，正在关闭调度中心...` });
+    if (shutdownResolve) {
+      shutdownResolve();
+    }
+  };
+
+  process.on('SIGINT', handleShutdown);
+  process.on('SIGTERM', handleShutdown);
+
   try {
     log({ message: `调度中心已启动` });
     log({ message: `配置信息:` });
@@ -133,12 +148,14 @@ async function runDefaultMode(mode: 'sdk' | 'pty' = 'sdk', userRequest?: string)
     log({ message: `\n提示: 使用 'npm start run "任务描述"' 提交任务` });
     log({ message: `调度中心正在运行，按 Ctrl+C 停止...` });
 
-    // 保持进程运行
-    await new Promise(() => {});
+    // 保持进程运行，等待停止信号
+    await shutdownPromise;
 
   } catch (error) {
     log({ message: `调度中心运行异常: ${error}`, level: 'error' });
   } finally {
+    process.removeListener('SIGINT', handleShutdown);
+    process.removeListener('SIGTERM', handleShutdown);
     await scheduler.shutdown();
   }
 }
