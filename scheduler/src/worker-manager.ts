@@ -493,12 +493,6 @@ ${cleanedOutput}
    */
   async shutdown(): Promise<void> {
     log({ message: `[WorkerManager] 正在关闭 ${this.workers.size} 个Worker...` });
-
-    // 关闭所有PTY管理器
-    for (const worker of this.workers.values()) {
-      // 每个worker有自己的manager，但这里统一清理
-    }
-
     this.workers.clear();
     log({ message: `[WorkerManager] 所有Worker已关闭` });
   }

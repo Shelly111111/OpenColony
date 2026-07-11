@@ -3,21 +3,6 @@
  */
 
 import * as fs from "fs";
-import * as path from "path";
-
-const LOG_DIR = path.join(process.cwd(), "scheduler-logs");
-
-export function ensureLogDir(): void {
-  if (!fs.existsSync(LOG_DIR)) {
-    fs.mkdirSync(LOG_DIR, { recursive: true });
-  }
-}
-
-export function createLogFile(taskId: string): string {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const filename = `scheduler-${taskId}-${timestamp}.log`;
-  return path.join(LOG_DIR, filename);
-}
 
 function writeToLog(logFile: string, content: string): void {
   const timestamp = new Date().toISOString();

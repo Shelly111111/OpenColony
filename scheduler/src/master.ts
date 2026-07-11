@@ -304,30 +304,6 @@ ${outputStr}
   }
 
   /**
-   * 获取任务状态
-   */
-  getTaskStatus(taskId: string): TaskStatus | null {
-    const task = this.tasks.get(taskId);
-    return task ? task.status : null;
-  }
-
-  /**
-   * 停止任务
-   */
-  async stopTask(taskId: string): Promise<boolean> {
-    const task = this.tasks.get(taskId);
-    if (!task) return false;
-
-    if (task.status === TaskStatus.RUNNING) {
-      await this.planExecutor.stopExecution(task);
-      task.status = TaskStatus.FAILED;
-      task.error = "用户手动终止";
-    }
-
-    return true;
-  }
-
-  /**
    * 关闭调度器，释放所有资源
    */
   async shutdown(): Promise<void> {

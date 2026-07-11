@@ -78,8 +78,8 @@ export interface SubTask {
   workerType: string;
   priority: TaskPriority;
   status: TaskStatus;
-  dependencies: string[]; // 依赖的子任务ID列表
-  command: string; // 要执行的命令
+  dependencies: string[];
+  command: string;
   output?: WorkerOutput;
   error?: string;
   retryCount: number;
@@ -87,8 +87,7 @@ export interface SubTask {
   createdAt: Date;
   startedAt?: Date;
   completedAt?: Date;
-  assignedWorkerId?: string;
-  worker?: WorkerInstance; // 关联的Worker实例
+  worker?: WorkerInstance;
 }
 
 /**
@@ -141,11 +140,8 @@ export interface WorkerInstance {
   id: string;
   type: string;
   status: "idle" | "busy" | "error";
-  sessionId?: number; // claude-multi-runner的会话ID
-  ptySessionId?: number; // PTY会话ID（对应ClaudeUnifiedPtyManager的session.id）
   currentTaskId?: string;
   logFile?: string;
-  screenLogFile?: string;
   createdAt: Date;
   lastUsedAt?: Date;
 }
@@ -213,8 +209,7 @@ export enum MessageStatus {
   PENDING = "pending",
   SENT = "sent",
   RECEIVED = "received",
-  PROCESSED = "processed",
-  EXPIRED = "expired"
+  PROCESSED = "processed"
 }
 
 /**
@@ -232,7 +227,7 @@ export interface Message {
   sentAt?: Date;
   receivedAt?: Date;
   processedAt?: Date;
-  ttl?: number; // 过期时间（秒）
+  ttl?: number;
   retryCount?: number;
 }
 

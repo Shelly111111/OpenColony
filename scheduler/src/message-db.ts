@@ -1,8 +1,7 @@
 import * as path from "path";
 import * as fs from "fs";
 import Database from "better-sqlite3";
-import { Message, MessageStatus, MessagePriority, WorkerStatusInfo } from "./types";
-import { v4 as uuidv4 } from "uuid";
+import { Message, MessageStatus, MessagePriority } from "./types";
 
 export class MessageDB {
   private db: ReturnType<typeof Database>;
@@ -77,21 +76,6 @@ export class MessageDB {
     );
   }
 
-  getMessagesByWorkerId(workerId: string, status?: MessageStatus): Message[] {
-    let query = `SELECT * FROM messages WHERE to_worker_id = ?`;
-    const params: any[] = [workerId];
-
-    if (status) {
-      query += ` AND status = ?`;
-      params.push(status);
-    }
-
-    const stmt = this.db.prepare(query);
-    const rows = stmt.all(...params) as any[];
-
-    return rows.map(this.rowToMessage);
-  }
-
   getPendingMessages(workerId: string): Message[] {
     const stmt = this.db.prepare(`
       SELECT * FROM messages 
@@ -116,11 +100,6 @@ export class MessageDB {
     stmt.run(status, now.toISOString(), messageId);
   }
 
-  deleteMessage(messageId: string): void {
-    const stmt = this.db.prepare(`DELETE FROM messages WHERE id = ?`);
-    stmt.run(messageId);
-  }
-
   cleanupExpiredMessages(retentionDays: number = 7): void {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
@@ -130,18 +109,6 @@ export class MessageDB {
       WHERE created_at < ?
     `);
     stmt.run(cutoffDate.toISOString());
-  }
-
-  getAllMessages(): Message[] {
-    const stmt = this.db.prepare(`SELECT * FROM messages ORDER BY created_at DESC`);
-    const rows = stmt.all() as any[];
-    return rows.map(this.rowToMessage);
-  }
-
-  getMessageById(messageId: string): Message | undefined {
-    const stmt = this.db.prepare(`SELECT * FROM messages WHERE id = ?`);
-    const row = stmt.get(messageId) as any;
-    return row ? this.rowToMessage(row) : undefined;
   }
 
   private rowToMessage(row: any): Message {
