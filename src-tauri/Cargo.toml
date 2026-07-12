@@ -1,0 +1,21 @@
+[package]
+name = "opencolony"
+version = "2.0.0"
+description = "OpenColony - Master调度集群桌面应用"
+authors = ["Shelly111111"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+tauri = { version = "1.5", features = ["dialog-all", "fs-all", "path-all", "shell-open", "window-all"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tokio-util = "0.7"
+futures-util = "0.3"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

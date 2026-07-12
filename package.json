@@ -15,7 +15,13 @@
     "predev": "npm run clean",
     "dev": "ts-node-dev src/index.ts",
     "lint": "eslint . --ext .ts",
-    "test": "echo \"Tests not implemented yet\" && exit 0"
+    "test": "echo \"Tests not implemented yet\" && exit 0",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:windows": "tauri build --target x86_64-pc-windows-msvc",
+    "tauri:build:macos": "tauri build --target x86_64-apple-darwin",
+    "tauri:build:linux": "tauri build --target x86_64-unknown-linux-gnu",
+    "tauri:icons": "node scripts/generate-ico.js"
   },
   "keywords": [
     "claude",
@@ -43,6 +49,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^1.5.0",
     "@types/node": "^20.11.0",
     "@types/uuid": "^9.0.7",
     "ts-node-dev": "^2.0.0"
