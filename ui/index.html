@@ -15,9 +15,9 @@
         <span class="title-text">Master调度集群 · 三层嵌套多Agent融合架构</span>
       </div>
       <div class="title-right">
-        <span class="version-tag">v3.0 | 自适应架构</span>
-        <span class="status-dot running"></span>
-        <span class="status-text">系统运行中</span>
+        <span class="version-tag">v3.0 | 真实集成</span>
+        <span class="status-dot running" id="systemDot"></span>
+        <span class="status-text" id="systemStatusText">系统就绪</span>
       </div>
     </header>
 
@@ -28,6 +28,10 @@
           <div class="nav-item active" data-page="chat" onclick="switchPage('chat')">
             <span class="nav-icon">💬</span>
             <span class="nav-text">主界面</span>
+          </div>
+          <div class="nav-item" data-page="tasks" onclick="switchPage('tasks')">
+            <span class="nav-icon">📋</span>
+            <span class="nav-text">任务日志</span>
           </div>
           <div class="nav-item" data-page="roles" onclick="switchPage('roles')">
             <span class="nav-icon">👤</span>
@@ -43,9 +47,10 @@
           </div>
         </nav>
         <div class="sidebar-footer">
-          <div class="footer-stat">Agent池: <span id="agentCount">8</span> 个</div>
-          <div class="footer-stat">任务队列: <span id="taskQueue">3</span> 待处理</div>
-          <div class="footer-stat">会话: <span id="sessionId">#1024</span></div>
+          <div class="footer-stat">Agent池: <span id="agentCount">0</span> 个</div>
+          <div class="footer-stat">任务: <span id="taskQueue">0</span></div>
+          <div class="footer-stat">会话: <span id="sessionId">#000000</span></div>
+          <div class="footer-stat" id="runModeDisplay">模式: SDK</div>
         </div>
       </aside>
 
@@ -53,91 +58,101 @@
       <main class="content">
         <!-- 主界面 / 对话 -->
         <section id="page-chat" class="page active">
-          <h2 class="page-title">💬 主界面 · 对话窗口</h2>
+          <h2 class="page-title">💬 主界面 · 任务提交</h2>
           <div class="chat-container">
             <div class="chat-tabs">
               <div class="chat-tab active" data-tab="master" onclick="switchChatTab('master')">
                 <span class="tab-dot master"></span>
                 <span class="tab-name">📋 Master调度</span>
-                <span class="tab-status">● 活跃</span>
-              </div>
-              <div class="chat-tab" data-tab="worker1" onclick="switchChatTab('worker1')">
-                <span class="tab-dot worker1"></span>
-                <span class="tab-name">💻 Worker1</span>
-              </div>
-              <div class="chat-tab" data-tab="worker2" onclick="switchChatTab('worker2')">
-                <span class="tab-dot worker2"></span>
-                <span class="tab-name">📊 Worker2</span>
-              </div>
-              <div class="chat-tab" data-tab="worker3" onclick="switchChatTab('worker3')">
-                <span class="tab-dot worker3"></span>
-                <span class="tab-name">📈 Worker3</span>
+                <span class="tab-status" id="masterTabStatus">● 就绪</span>
               </div>
               <div class="chat-tab add-tab" onclick="addNewTab()">
                 <span>＋ 新增</span>
               </div>
             </div>
             <div class="chat-messages" id="chatMessages">
-              <div class="msg-meta">📝 对话记录 · 共 <span id="msgCount">7</span> 条消息</div>
+              <div class="msg-meta">📝 对话记录 · 共 <span id="msgCount">0</span> 条消息</div>
             </div>
             <div class="chat-input-area">
               <div class="chat-input-wrapper">
-                <input type="text" class="chat-input" id="chatInput" placeholder="输入消息..." onkeydown="handleChatInputKey(event)" />
+                <input type="text" class="chat-input" id="chatInput" placeholder="输入任务描述（提交后启动真实 scheduler）..." onkeydown="handleChatInputKey(event)" />
                 <div class="chat-actions">
-                  <button class="action-btn" title="附件">📎</button>
-                  <button class="action-btn" title="思维链">🧠</button>
+                  <select id="runModeSelect" class="mode-select" title="运行模式">
+                    <option value="sdk">SDK模式</option>
+                    <option value="pty">PTY模式</option>
+                  </select>
+                  <button class="action-btn" title="清空对话" onclick="clearMessages()">🗑</button>
                   <button class="send-btn" onclick="sendMessage()">➤</button>
                 </div>
               </div>
             </div>
             <div class="chat-tips">
-              💡 点击上方 Tab 切换查看 Master 或各个 Worker 的独立对话窗口<br />
-              &nbsp;&nbsp;&nbsp;每个 Worker 对话窗口独立展示其 ReAct 推理日志、工具调用和输出结果
+              💡 输入任务后回车提交，将启动 scheduler 子进程异步执行<br />
+              &nbsp;&nbsp;&nbsp;切换至「任务日志」页面查看真实执行日志，「Worker状态」查看通信记录
             </div>
           </div>
           <div class="status-bar">
-            <span>📡 连接: Claude API ✓ | 本地模型 ✓ | 上下文池: 活跃 | DAG任务: 3/3 | 会话: #1024</span>
-            <span class="status-right">最后更新: <span id="lastUpdate">2026-06-25 14:32:18</span></span>
+            <span id="connectionStatus">📡 连接状态: 等待测试</span>
+            <span class="status-right">最后更新: <span id="lastUpdate">--</span></span>
+          </div>
+        </section>
+
+        <!-- 任务日志 -->
+        <section id="page-tasks" class="page">
+          <div class="page-header">
+            <h2 class="page-title">📋 任务日志 · 真实执行记录</h2>
+            <button class="btn-outline" onclick="loadTaskList()">🔄 刷新</button>
+          </div>
+          <div class="task-list-container">
+            <div class="task-list" id="taskList">
+              <div class="empty-state">暂无任务记录，提交任务后将显示在此</div>
+            </div>
+          </div>
+          <div class="log-viewer-container" id="logViewerContainer" style="display:none">
+            <div class="log-viewer-header">
+              <h3>📄 日志详情 <span id="logFileName" class="log-file-name"></span></h3>
+              <button class="btn-outline" onclick="closeLogViewer()">✕ 关闭</button>
+            </div>
+            <pre class="log-viewer" id="logViewer"></pre>
+          </div>
+          <div class="status-bar">
+            <span id="taskLogsPath">日志根目录: 加载中...</span>
           </div>
         </section>
 
         <!-- 角色管理 -->
         <section id="page-roles" class="page">
           <div class="page-header">
-            <h2 class="page-title">👤 角色管理 · Agent定义与Skill绑定</h2>
-            <button class="btn-primary" onclick="alert('新增角色功能开发中')">＋ 新增角色</button>
+            <h2 class="page-title">👤 角色管理 · Agent定义</h2>
+            <button class="btn-outline" onclick="loadAgentRoles()">🔄 刷新</button>
           </div>
           <div class="role-grid" id="roleGrid"></div>
           <div class="pagination">
-            <span class="pagination-info">共 <span id="roleTotal">8</span> 个Agent · 显示 1-6</span>
-            <div class="pagination-controls">
-              <button class="page-btn active">1</button>
-              <button class="page-btn">2</button>
-            </div>
+            <span class="pagination-info">共 <span id="roleTotal">0</span> 个Agent</span>
           </div>
           <div class="info-card">
             <h3 class="info-title">📌 角色管理说明</h3>
             <ul class="info-list">
-              <li>每个角色（Agent）包含：一级静态标签（固定大类）和二级动态标签（任务动态生成）</li>
-              <li>Skill绑定：每个角色可绑定多个Skill，调度时根据任务标签匹配度加权分发</li>
-              <li>画像数据：记录任务完成次数、质量评分、熟练度衰减系数，支撑智能调度</li>
+              <li>数据源: scheduler/config/role.json（读取真实配置文件）</li>
+              <li>每个角色定义了身份标识、系统提示词和绑定技能</li>
+              <li>修改 role.json 后点击刷新即可看到最新配置</li>
             </ul>
-          </div>
-          <div class="status-bar">
-            <span>📡 连接: Claude API ✓ | 本地模型 ✓ | 上下文池: 活跃 | DAG任务: 3/3</span>
           </div>
         </section>
 
         <!-- Skill管理 -->
         <section id="page-skills" class="page">
           <div class="page-header">
-            <h2 class="page-title">🔧 Skill管理 · 技能定义与版本管理</h2>
-            <button class="btn-primary" onclick="alert('新增Skill功能开发中')">＋ 新增Skill</button>
+            <h2 class="page-title">🔧 Skill管理 · 技能定义</h2>
+            <div class="header-actions">
+              <button class="btn-outline" onclick="loadSkills()">📥 从Claude加载</button>
+              <button class="btn-primary" onclick="saveSkills()">💾 保存到文件</button>
+            </div>
           </div>
           <div class="skill-filters">
             <div class="search-box">
               <span>🔍</span>
-              <input type="text" id="skillSearch" placeholder="搜索Skill名称或标签..." oninput="filterSkills()" />
+              <input type="text" id="skillSearch" placeholder="搜索Skill名称..." oninput="filterSkills()" />
             </div>
             <select class="filter-select" id="statusFilter" onchange="filterSkills()">
               <option value="">全部状态</option>
@@ -150,6 +165,7 @@
               <option value="数据">数据</option>
               <option value="可视化">可视化</option>
               <option value="调度">调度</option>
+              <option value="通信">通信</option>
             </select>
           </div>
           <div class="skill-table-container">
@@ -161,36 +177,24 @@
                   <th>分类</th>
                   <th>版本</th>
                   <th>状态</th>
-                  <th>操作</th>
                 </tr>
               </thead>
               <tbody id="skillTableBody"></tbody>
             </table>
           </div>
-          <div class="pagination">
-            <span class="pagination-info">共 <span id="skillTotal">12</span> 个Skill · 显示 1-7</span>
-            <div class="pagination-controls">
-              <button class="page-btn active">1</button>
-              <button class="page-btn">2</button>
-              <span class="page-ellipsis">...</span>
-            </div>
-          </div>
           <div class="stats-row">
             <div class="stat-card">
               <div class="stat-label">总计Skill</div>
-              <div class="stat-value" id="statTotal">12</div>
+              <div class="stat-value" id="statTotal">0</div>
             </div>
             <div class="stat-card">
               <div class="stat-label">活跃中</div>
-              <div class="stat-value success" id="statActive">8</div>
+              <div class="stat-value success" id="statActive">0</div>
             </div>
             <div class="stat-card">
               <div class="stat-label">待更新</div>
-              <div class="stat-value warning" id="statPending">4</div>
+              <div class="stat-value warning" id="statPending">0</div>
             </div>
-          </div>
-          <div class="status-bar">
-            <span>📡 连接: Claude API ✓ | 本地模型 ✓ | 上下文池: 活跃 | 最后同步: <span id="lastSync">2026-06-25 14:32:18</span></span>
           </div>
         </section>
 
@@ -205,25 +209,28 @@
               <div class="form-row">
                 <div class="form-group">
                   <label>模型提供商</label>
-                  <select id="modelProvider" class="form-select">
+                  <select id="modelProvider" class="form-select" disabled>
+                    <option value="Anthropic" selected>Anthropic</option>
                     <option value="OpenAI">OpenAI</option>
-                    <option value="Anthropic">Anthropic</option>
                     <option value="Azure">Azure OpenAI</option>
+                    <option value="DeepSeek">DeepSeek</option>
+                    <option value="其他">其他</option>
                   </select>
+                  <span class="form-hint">（当前仅支持 Anthropic）</span>
                 </div>
                 <div class="form-group">
                   <label>模型名称</label>
-                  <input type="text" id="modelName" class="form-input" value="gpt-4-turbo" />
+                  <input type="text" id="modelName" class="form-input" placeholder="claude-3-5-sonnet-20241022" />
                 </div>
               </div>
               <div class="form-row">
                 <div class="form-group">
                   <label>API Key</label>
-                  <input type="password" id="apiKey" class="form-input" value="sk-************************" />
+                  <input type="password" id="apiKey" class="form-input" placeholder="sk-ant-..." />
                 </div>
                 <div class="form-group">
                   <label>API地址</label>
-                  <input type="text" id="apiBase" class="form-input" value="https://api.openai.com/v1/chat/completions" />
+                  <input type="text" id="apiBase" class="form-input" placeholder="https://api.anthropic.com" />
                 </div>
               </div>
             </div>
@@ -236,8 +243,14 @@
             <div class="settings-body">
               <div class="form-row">
                 <div class="form-group full-width">
-                  <label>Claude本地地址</label>
-                  <input type="text" id="claudePath" class="form-input" value="/usr/local/claude/bin/claude-server" />
+                  <label>Claude命令路径</label>
+                  <input type="text" id="claudePath" class="form-input" placeholder="claude" />
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group full-width">
+                  <label>Claude目录路径</label>
+                  <input type="text" id="claudeUrl" class="form-input" placeholder=".claude" />
                 </div>
               </div>
               <div class="form-row">
@@ -246,12 +259,19 @@
                   <input type="number" id="maxAgents" class="form-input small" value="8" />
                   <span class="form-hint">(建议范围 4-16)</span>
                 </div>
+                <div class="form-group">
+                  <label>Scheduler运行模式</label>
+                  <select id="runModeCfg" class="form-select">
+                    <option value="sdk">SDK模式（推荐）</option>
+                    <option value="pty">PTY模式</option>
+                  </select>
+                </div>
               </div>
             </div>
           </div>
 
           <div class="settings-actions">
-            <button class="btn-primary large" onclick="saveSettings()">💾 保存</button>
+            <button class="btn-primary large" onclick="saveSettings()">💾 保存配置</button>
           </div>
 
           <div class="settings-card">
@@ -262,18 +282,27 @@
               <div class="test-row">
                 <button class="btn-outline" onclick="testModelConnection()">测试大模型连接</button>
                 <button class="btn-outline" onclick="testClaudeConnection()">测试Claude连接</button>
-                <span class="test-status success" id="modelTestStatus">
-                  <span class="status-dot running"></span> 大模型 已连接
+                <span class="test-status" id="modelTestStatus">
+                  <span class="status-dot pending"></span> 大模型 待测试
                 </span>
-                <span class="test-status warning" id="claudeTestStatus">
+                <span class="test-status" id="claudeTestStatus">
                   <span class="status-dot pending"></span> Claude 待测试
                 </span>
               </div>
             </div>
           </div>
 
-          <div class="status-bar">
-            <span>📡 配置状态: 已保存 | 大模型: 已连接 | Claude: 待测试 | 通用Agent上限: 8</span>
+          <div class="info-card">
+            <h3 class="info-title">📌 配置存储说明</h3>
+            <ul class="info-list">
+              <li>大模型配置: &lt;项目根&gt;/.env（ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL / ANTHROPIC_MODEL）</li>
+              <li>模板文件: &lt;项目根&gt;/.env.example（.env 不存在时回退）</li>
+              <li>其他配置: ~/.opencolony/config.json（claude_path / claude_url / max_agents / run_mode）</li>
+              <li>任务日志路径: &lt;项目根&gt;/worker-logs/&lt;traceId&gt;_&lt;timestamp&gt;/</li>
+              <li>通信数据库: ~/.opencolony/messages.db（SQLite + WAL模式）</li>
+              <li>角色配置: scheduler/config/role.json</li>
+              <li>技能配置: scheduler/config/skill.json</li>
+            </ul>
           </div>
         </section>
       </main>
