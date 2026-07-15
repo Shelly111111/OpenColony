@@ -51,14 +51,15 @@ pub async fn submit_task(
 
     let project_root = paths::project_root();
 
-    let mut cmd = Command::new("npx");
+    let mut cmd = Command::new("node");
     cmd.current_dir(&project_root)
-        .arg("ts-node")
+        .arg("-r")
+        .arg("ts-node/register")
         .arg(&scheduler_path)
         .arg(&mode)
         .arg(&task)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .stdin(Stdio::null());
 
     #[cfg(windows)]
@@ -67,7 +68,7 @@ pub async fn submit_task(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let mut child = cmd.spawn().map_err(|e| format!("启动 scheduler 失败: {}", e))?;
+    let child = cmd.spawn().map_err(|e| format!("启动 scheduler 失败: {}", e))?;
     let pid = child.id().unwrap_or(0);
     let trace_id = format!("task_{}", chrono::Local::now().format("%Y%m%d%H%M%S"));
 
@@ -87,13 +88,54 @@ pub async fn submit_task(
     let trace_id_clone = trace_id.clone();
     let app_handle = app.clone();
     tokio::spawn(async move {
-        let _ = child.wait().await;
+        // 等待子进程完成并获取输出
+        let output = child.wait_with_output().await;
+        match output {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let exit_code = out.status.code();
+
+                // 逐行推送 stdout
+                for line in stdout.lines() {
+                    let _ = app_handle.emit_all("scheduler-output", serde_json::json!({
+                        "traceId": trace_id_clone,
+                        "type": "stdout",
+                        "line": line
+                    }));
+                }
+
+                // 逐行推送 stderr
+                for line in stderr.lines() {
+                    let _ = app_handle.emit_all("scheduler-output", serde_json::json!({
+                        "traceId": trace_id_clone,
+                        "type": "stderr",
+                        "line": line
+                    }));
+                }
+
+                // 推送任务完成事件
+                let _ = app_handle.emit_all("task-completed", serde_json::json!({
+                    "traceId": trace_id_clone,
+                    "exitCode": exit_code
+                }));
+
+                utils::log_info(&format!("[Tauri] 任务 {} 子进程已退出 (code: {:?})", trace_id_clone, exit_code));
+            }
+            Err(e) => {
+                let _ = app_handle.emit_all("task-completed", serde_json::json!({
+                    "traceId": trace_id_clone,
+                    "exitCode": null,
+                    "error": e.to_string()
+                }));
+                utils::log_info(&format!("[Tauri] 任务 {} 子进程异常: {}", trace_id_clone, e));
+            }
+        }
         {
             let app_state: State<AppState> = app_handle.state();
             let mut tasks = app_state.running_tasks.lock().unwrap();
             tasks.remove(&trace_id_clone);
         }
-        utils::log_info(&format!("[Tauri] 任务 {} 子进程已退出", trace_id_clone));
     });
 
     Ok(TaskResult::ok_with_trace("任务已提交，正在异步执行", trace_id))

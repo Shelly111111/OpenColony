@@ -95,5 +95,6 @@ document.addEventListener('DOMContentLoaded', () => {
   renderMessages();
   loadSettings();
   updateSystemStatus();
+  if (typeof initSchedulerListeners === 'function') initSchedulerListeners();
   setInterval(updateSystemStatus, 5000);
 });

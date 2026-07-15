@@ -60,6 +60,56 @@ function renderMessages() {
   container.scrollTop = container.scrollHeight;
 }
 
+// ==================== Tauri 事件监听 ====================
+
+function initSchedulerListeners() {
+  if (typeof window.__TAURI__ === 'undefined') return;
+
+  // 监听 scheduler 输出
+  window.__TAURI__.event.listen('scheduler-output', (event) => {
+    const { traceId, type, line } = event.payload;
+    if (!chatMessages.master) chatMessages.master = [];
+
+    // 过滤掉不需要展示的行（如 SQL 语句、PRAGMA 等）
+    if (line.match(/^\s*(PRAGMA|CREATE|INSERT|SELECT|ALTER|DROP)\s/i)) return;
+    if (line.trim() === '') return;
+
+    // 追加到最后一条 master 消息中，或新建一条
+    const lastMsg = chatMessages.master[chatMessages.master.length - 1];
+    if (lastMsg && lastMsg.type === 'master' && !lastMsg.closed) {
+      lastMsg.content += '\n' + line;
+    } else {
+      chatMessages.master.push({ type: 'master', content: line, closed: false });
+    }
+    renderMessages();
+  });
+
+  // 监听任务完成
+  window.__TAURI__.event.listen('task-completed', (event) => {
+    const { traceId, exitCode, error } = event.payload;
+
+    // 关闭最后一条消息的追加
+    const lastMsg = chatMessages.master[chatMessages.master.length - 1];
+    if (lastMsg && lastMsg.type === 'master') {
+      lastMsg.closed = true;
+    }
+
+    // 添加任务完成状态
+    const statusText = error
+      ? `❌ 任务异常退出: ${error}`
+      : exitCode === 0
+        ? '✅ 任务已完成'
+        : `⚠️ 任务已退出 (退出码: ${exitCode})`;
+
+    chatMessages.master.push({ type: 'master', content: statusText, closed: true });
+    renderMessages();
+
+    // 更新状态指示器
+    document.getElementById('masterTabStatus').textContent = '● 已完成';
+    document.getElementById('masterTabStatus').style.color = '#4ade80';
+  });
+}
+
 // ==================== 提交任务 ====================
 
 async function sendMessage() {
@@ -80,7 +130,8 @@ async function sendMessage() {
     if (result.success) {
       chatMessages[currentChatTab].push({
         type: 'master',
-        content: `✅ ${result.message}\n\n📝 Trace ID: ${result.trace_id || 'N/A'}\n${result.data || ''}`
+        content: `✅ ${result.message}\n\n📝 Trace ID: ${result.trace_id || 'N/A'}\n${result.data || ''}`,
+        closed: true
       });
       document.getElementById('masterTabStatus').textContent = '● 执行中';
       document.getElementById('masterTabStatus').style.color = '#facc15';

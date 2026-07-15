@@ -8,8 +8,8 @@ import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { log } from './logger';
 
-// 加载环境变量
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+// 加载环境变量（ts-node 下 __dirname 为 scheduler/src/，需 ../../.env 回到项目根目录）
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 export interface LLMMessage {
   role: 'user' | 'assistant';
