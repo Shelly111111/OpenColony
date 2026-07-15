@@ -487,7 +487,7 @@ fn get_skills() -> Vec<Skill> {
     }
 }
 
-/// 从 Claude 目录加载技能列表（.claude/skills.json + .claude/plugins/）
+/// 从 Claude 目录加载技能列表（plugins/installed_plugins.json + skills/*/SKILL.md）
 #[tauri::command]
 fn get_skills_from_claude(claude_dir: String) -> TaskResult {
     let dir_path = Path::new(&claude_dir);
@@ -503,18 +503,40 @@ fn get_skills_from_claude(claude_dir: String) -> TaskResult {
 
     let mut all_skills: Vec<Skill> = Vec::new();
 
-    let skills_json_path = dir_path.join("skills.json");
-    if skills_json_path.exists() {
-        match fs::read_to_string(&skills_json_path) {
+    let installed_plugins_path = dir_path.join("plugins").join("installed_plugins.json");
+    if installed_plugins_path.exists() {
+        match fs::read_to_string(&installed_plugins_path) {
             Ok(content) => {
-                match serde_json::from_str::<SkillFile>(&content) {
-                    Ok(parsed) => {
-                        all_skills.extend(parsed.skills);
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(installed_data) => {
+                        if let Some(plugins) = installed_data.get("plugins").and_then(|p| p.as_object()) {
+                            for (plugin_key, plugin_info) in plugins.iter() {
+                                if let Some(plugin_list) = plugin_info.as_array() {
+                                    for plugin_data in plugin_list.iter() {
+                                        let name = plugin_data.get("version")
+                                            .and_then(|v| v.as_str()).unwrap_or(plugin_key);
+                                        let install_path = plugin_data.get("installPath")
+                                            .and_then(|v| v.as_str()).unwrap_or("");
+                                        let plugin_name = plugin_key.split('@').next().unwrap_or(plugin_key);
+                                        
+                                        all_skills.push(Skill {
+                                            id: format!("plugin-{}", plugin_name),
+                                            name: format!("{} v{}", plugin_name, name),
+                                            description: format!("安装路径: {}", install_path),
+                                            category: "插件".to_string(),
+                                            version: name.to_string(),
+                                            status: "活跃".to_string(),
+                                            icon: "🔌".to_string(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
                     }
                     Err(e) => {
                         return TaskResult {
                             success: false,
-                            message: format!("skills.json 解析失败: {}", e),
+                            message: format!("installed_plugins.json 解析失败: {}", e),
                             data: None,
                             trace_id: None,
                         };
@@ -524,7 +546,7 @@ fn get_skills_from_claude(claude_dir: String) -> TaskResult {
             Err(e) => {
                 return TaskResult {
                     success: false,
-                    message: format!("读取 skills.json 失败: {}", e),
+                    message: format!("读取 installed_plugins.json 失败: {}", e),
                     data: None,
                     trace_id: None,
                 };
@@ -532,36 +554,41 @@ fn get_skills_from_claude(claude_dir: String) -> TaskResult {
         }
     }
 
-    let plugins_dir = dir_path.join("plugins");
-    if plugins_dir.exists() && plugins_dir.is_dir() {
-        match fs::read_dir(&plugins_dir) {
+    let skills_dir = dir_path.join("skills");
+    if skills_dir.exists() && skills_dir.is_dir() {
+        match fs::read_dir(&skills_dir) {
             Ok(entries) => {
                 for entry in entries.filter_map(|e| e.ok()) {
-                    let file_name = entry.file_name().to_string_lossy().to_string();
-                    if file_name.ends_with(".json") {
-                        match fs::read_to_string(entry.path()) {
-                            Ok(content) => {
-                                match serde_json::from_str::<serde_json::Value>(&content) {
-                                    Ok(plugin_data) => {
-                                        let plugin_name = plugin_data.get("name")
-                                            .and_then(|v| v.as_str()).unwrap_or(&file_name);
-                                        let plugin_desc = plugin_data.get("description")
-                                            .and_then(|v| v.as_str()).unwrap_or("");
-                                        
-                                        all_skills.push(Skill {
-                                            id: format!("plugin-{}", plugin_name),
-                                            name: plugin_name.to_string(),
-                                            description: plugin_desc.to_string(),
-                                            category: "插件".to_string(),
-                                            version: "v1.0.0".to_string(),
-                                            status: "活跃".to_string(),
-                                            icon: "🔌".to_string(),
-                                        });
+                    let path = entry.path();
+                    if path.is_dir() {
+                        // 子目录形式: skills/<skill_id>/SKILL.md
+                        let skill_id = entry.file_name().to_string_lossy().to_string();
+                        let skill_file = path.join("SKILL.md");
+                        if skill_file.exists() {
+                            match fs::read_to_string(&skill_file) {
+                                Ok(content) => {
+                                    let skill_info = parse_claude_skill(&skill_id, &content);
+                                    if !skill_info.id.is_empty() {
+                                        all_skills.push(skill_info);
                                     }
-                                    Err(_) => {}
                                 }
+                                Err(_) => {}
                             }
-                            Err(_) => {}
+                        }
+                    } else if path.is_file() {
+                        // 直接文件形式: skills/<skill_id>.md
+                        let file_name = entry.file_name().to_string_lossy().to_string();
+                        if file_name.ends_with(".md") {
+                            let skill_id = file_name.trim_end_matches(".md").to_string();
+                            match fs::read_to_string(&path) {
+                                Ok(content) => {
+                                    let skill_info = parse_claude_skill(&skill_id, &content);
+                                    if !skill_info.id.is_empty() {
+                                        all_skills.push(skill_info);
+                                    }
+                                }
+                                Err(_) => {}
+                            }
                         }
                     }
                 }
@@ -590,10 +617,68 @@ fn get_skills_from_claude(claude_dir: String) -> TaskResult {
     }
 }
 
+fn parse_claude_skill(skill_id: &str, content: &str) -> Skill {
+    let mut name = skill_id.replace('-', " ").to_string();
+    let mut description = String::new();
+    let category = "技能".to_string();
+    
+    let lines: Vec<&str> = content.lines().collect();
+    
+    if lines.len() >= 4 && lines[0] == "---" {
+        for i in 1..lines.len() {
+            if lines[i] == "---" {
+                break;
+            }
+            if let Some((key, val)) = lines[i].split_once(':') {
+                let key = key.trim();
+                let val = val.trim().trim_matches('"').trim_matches('\'');
+                if key == "name" {
+                    name = val.to_string();
+                } else if key == "description" {
+                    description = val.to_string();
+                }
+            }
+        }
+    }
+    
+    if description.is_empty() {
+        for (i, line) in lines.iter().enumerate() {
+            if line.starts_with("## 概述") || line.starts_with("## 简介") {
+                for j in i+1..lines.len() {
+                    let next_line = lines[j];
+                    if next_line.starts_with("## ") {
+                        break;
+                    }
+                    if !next_line.is_empty() {
+                        description.push_str(next_line.trim());
+                        description.push('\n');
+                    }
+                }
+                description = description.trim().to_string();
+                break;
+            }
+        }
+    }
+    
+    if description.is_empty() {
+        description = "技能文档".to_string();
+    }
+    
+    Skill {
+        id: skill_id.to_string(),
+        name,
+        description,
+        category,
+        version: "v1.0.0".to_string(),
+        status: "活跃".to_string(),
+        icon: "🎯".to_string(),
+    }
+}
+
 /// 保存技能列表到 skill.json 文件
 #[tauri::command]
 fn save_skills_to_file(skills_json: String) -> TaskResult {
-    let skill_file_path = Path::new("scheduler/config/skill.json");
+    let skill_file_path = scheduler_config_dir().join("skill.json");
     
     let skills: Vec<Skill> = match serde_json::from_str(&skills_json) {
         Ok(s) => s,

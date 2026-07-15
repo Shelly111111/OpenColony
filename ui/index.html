@@ -145,6 +145,7 @@
           <div class="page-header">
             <h2 class="page-title">🔧 Skill管理 · 技能定义</h2>
             <div class="header-actions">
+              <button class="btn-outline" onclick="loadSkillsFromConfig()">🔄 刷新</button>
               <button class="btn-outline" onclick="loadSkills()">📥 从Claude加载</button>
               <button class="btn-primary" onclick="saveSkills()">💾 保存到文件</button>
             </div>
@@ -161,6 +162,8 @@
             </select>
             <select class="filter-select" id="categoryFilter" onchange="filterSkills()">
               <option value="">分类筛选</option>
+              <option value="技能">技能</option>
+              <option value="插件">插件</option>
               <option value="代码">代码</option>
               <option value="数据">数据</option>
               <option value="可视化">可视化</option>

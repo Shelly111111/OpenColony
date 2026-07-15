@@ -8,6 +8,9 @@ async function invoke(cmd, args) {
   throw new Error('Tauri 未就绪（请在 Tauri 环境中运行）');
 }
 
+// 全局配置变量
+let systemConfig = null;
+
 // ==================== 页面切换 ====================
 
 function switchPage(pageName) {
@@ -20,9 +23,9 @@ function switchPage(pageName) {
 
   // 进入页面时按需加载
   if (pageName === 'roles') loadAgentRoles();
-  else if (pageName === 'skills') loadSkills();
   else if (pageName === 'settings') loadSettings();
   else if (pageName === 'tasks') loadTaskList();
+  else if (pageName === 'skills') loadSkillsFromConfig();
 }
 
 // ==================== 对话 Tab ====================
@@ -309,39 +312,60 @@ function escapeHtml(str) {
 
 let allSkills = [];
 
-async function loadSkills() {
+async function loadSkillsFromConfig() {
   try {
-    const claudeDir = document.getElementById('claudeUrl')?.value || '.claude';
-    const result = await invoke('get_skills_from_claude', { claude_dir: claudeDir });
+    const skills = await invoke('get_skills', {});
+    if (Array.isArray(skills) && skills.length > 0) {
+      allSkills = skills;
+      filterSkills();
+    }
+  } catch (e) {
+    console.error('从配置加载技能失败:', e);
+  }
+}
+
+async function loadSkills() {
+  const claudeDirInput = document.getElementById('claudeUrl');
+  const claudeDir = claudeDirInput?.value || systemConfig?.claude_url || '.claude';
+  
+  if (!claudeDir || claudeDir.trim() === '') {
+    alert('❌ 请先在系统设置中配置 Claude 目录路径');
+    return;
+  }
+  
+  alert(`⏳ 正在从 Claude 目录加载技能...\n目录: ${claudeDir.trim()}`);
+  
+  try {
+    const result = await invoke('get_skills_from_claude', { claudeDir: claudeDir.trim() });
     
     if (result.success && result.data) {
       try {
         const jsonData = JSON.parse(result.data);
         allSkills = parseClaudeSkills(jsonData);
-        showToast(`成功加载 ${allSkills.length} 个技能`, 'success');
+        alert(`✅ 加载完毕！成功加载 ${allSkills.length} 个技能`);
       } catch (parseErr) {
         console.error('解析技能数据失败:', parseErr);
         allSkills = [];
-        showToast('解析技能数据失败', 'error');
+        alert('❌ 解析技能数据失败: ' + parseErr.message);
       }
     } else {
       console.warn('从Claude目录加载技能失败:', result.message);
       allSkills = [];
-      showToast(result.message || '加载失败', 'error');
+      alert('❌ 加载失败: ' + (result.message || '未知错误'));
     }
     filterSkills();
   } catch (e) {
     console.error('加载Skill失败:', e);
     allSkills = [];
     filterSkills();
-    showToast('加载失败: ' + e.message, 'error');
+    alert('❌ 加载异常: ' + e.message);
   }
 }
 
 async function saveSkills() {
   try {
     const skillsJson = JSON.stringify(allSkills);
-    const result = await invoke('save_skills_to_file', { skills_json: skillsJson });
+    const result = await invoke('save_skills_to_file', { skillsJson: skillsJson });
     
     if (result.success) {
       showToast('技能保存成功', 'success');
@@ -387,25 +411,30 @@ function parseClaudeSkills(data) {
 }
 
 function filterSkills() {
-  const search = document.getElementById('skillSearch').value.toLowerCase();
-  const statusFilter = document.getElementById('statusFilter').value;
-  const categoryFilter = document.getElementById('categoryFilter').value;
+  try {
+    const search = document.getElementById('skillSearch').value.toLowerCase();
+    const statusFilter = document.getElementById('statusFilter').value;
+    const categoryFilter = document.getElementById('categoryFilter').value;
 
-  const filtered = allSkills.filter(skill => {
-    const matchSearch = !search || skill.name.toLowerCase().includes(search) || skill.description.toLowerCase().includes(search);
-    const matchStatus = !statusFilter || skill.status === statusFilter;
-    const matchCategory = !categoryFilter || skill.category === categoryFilter;
-    return matchSearch && matchStatus && matchCategory;
-  });
+    const filtered = allSkills.filter(skill => {
+      const matchSearch = !search || skill.name.toLowerCase().includes(search) || skill.description.toLowerCase().includes(search);
+      const matchStatus = !statusFilter || skill.status === statusFilter;
+      const matchCategory = !categoryFilter || skill.category === categoryFilter;
+      return matchSearch && matchStatus && matchCategory;
+    });
 
-  renderSkills(filtered);
-  updateSkillStats();
+    renderSkills(filtered);
+    updateSkillStats();
+  } catch (e) {
+    console.error('filterSkills 异常:', e);
+  }
 }
 
 function renderSkills(skills) {
   const tbody = document.getElementById('skillTableBody');
+  if (!tbody) { console.error('renderSkills: skillTableBody 元素不存在!'); return; }
   tbody.innerHTML = '';
-  document.getElementById('skillTotal').textContent = allSkills.length;
+  document.getElementById('statTotal').textContent = allSkills.length;
 
   if (skills.length === 0) {
     tbody.innerHTML = '<tr><td colspan="5" class="empty-row">无匹配Skill</td></tr>';
@@ -444,6 +473,7 @@ function updateSkillStats() {
 async function loadSettings() {
   try {
     const config = await invoke('get_system_config', {});
+    systemConfig = config;
     document.getElementById('modelProvider').value = 'Anthropic';
     document.getElementById('modelName').value = config.model_name || '';
     document.getElementById('apiKey').value = config.api_key || '';
@@ -477,6 +507,7 @@ async function saveSettings() {
     const result = await invoke('save_system_config', { config });
     if (result.success) {
       alert(`✅ ${result.message}\n路径: ${result.data || ''}`);
+      systemConfig = config;
       // 同步主界面
       document.getElementById('runModeSelect').value = config.run_mode;
       document.getElementById('runModeDisplay').textContent = `模式: ${config.run_mode.toUpperCase()}`;
