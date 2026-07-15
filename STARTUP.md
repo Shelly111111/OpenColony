@@ -1,10 +1,6 @@
 # OpenColony 启动指南
 
-## 统一启动方式
-
-项目已统一使用根目录的 npm scripts 管理所有服务。
-
-## 快速开始
+## 方式一：桌面应用（推荐）
 
 ### 1. 安装依赖
 
@@ -12,111 +8,115 @@
 npm install
 ```
 
-### 2. 启动服务
-
-#### 方式一：使用统一入口（推荐）
+### 2. 启动开发模式
 
 ```bash
-# 显示帮助
-npm start
+npm run tauri:dev
+```
 
-# 启动调度中心执行任务
-npm run run "分析当前目录结构"
+首次启动会编译 Rust 依赖，后续很快。启动后会打开桌面窗口，左侧导航切换功能页面。
 
-# 或直接
+### 3. 配置系统
+
+在「系统设置」页面填写：
+- **API Key**：Anthropic API 密钥
+- **API Base URL**：API 地址（默认 `https://api.anthropic.com`）
+- **模型名称**：如 `claude-3-5-sonnet-20241022`
+- **Claude 路径**：Claude CLI 可执行文件路径（默认 `claude`）
+- **Claude 目录**：Claude 配置目录（默认 `.claude`）
+
+点击「测试大模型连接」和「测试 Claude 连接」验证配置。
+
+### 4. 管理技能
+
+在「Skill 管理」页面：
+- 点击「从 Claude 加载」从本地 Claude 目录读取技能
+- 点击「刷新」重新加载已保存的技能
+- 点击「保存」将技能写入 `scheduler/config/skill.json`
+
+### 5. 提交任务
+
+在「任务调度」页面输入需求，选择运行模式（SDK/PTY），回车提交。
+
+### 6. 查看日志
+
+在「任务日志」页面查看历史任务的 Master 和 Worker 日志。
+
+---
+
+## 方式二：命令行
+
+### 1. 安装依赖
+
+```bash
+npm install
+```
+
+### 2. 配置环境变量
+
+```bash
+cp .env.example .env
+# 编辑 .env，填入 ANTHROPIC_API_KEY
+```
+
+### 3. 启动调度中心
+
+```bash
+# SDK 模式（默认）
 npm start run "分析当前目录结构"
 
-# 直接调用 Claude PTY
+# PTY 模式
+npm start run pty "分析当前目录结构"
+
+# 指定模式
+npm start run sdk "你的任务描述"
+```
+
+### 4. 直接调用 Claude
+
+```bash
+# SDK 模式
 npm start claude 1 "查看当前目录"
+
+# PTY 模式
+npm start claude pty 1 "查看当前目录"
 ```
 
-#### 方式二：使用独立脚本
-
-```bash
-# 启动调度中心
-npm run scheduler
-
-# 启动 Claude PTY 管理器
-npm run claude
-
-# 通过统一入口调用 Claude
-npm run claude:direct
-```
-
-### 3. 开发模式
-
-```bash
-# 开发模式（自动重启）
-npm run dev
-
-# 或指定命令
-npm run dev run "任务描述"
-npm run dev claude 1 "命令"
-```
+---
 
 ## 可用脚本
 
 | 命令 | 说明 |
 |------|------|
 | `npm start` | 显示帮助信息 |
-| `npm start run <需求>` | 启动调度中心执行任务 |
-| `npm start claude <参数>` | 直接调用 Claude PTY |
-| `npm run run` | 等同于 `npm start run` |
+| `npm start run [sdk\|pty] <需求>` | 启动调度中心执行任务 |
+| `npm start claude [sdk\|pty] <参数>` | 直接调用 Claude |
 | `npm run scheduler` | 直接启动调度中心 |
-| `npm run claude` | 直接启动 Claude PTY 管理器 |
-| `npm run claude:direct` | 通过统一入口调用 Claude |
-| `npm run dev` | 开发模式（需要安装 ts-node-dev） |
+| `npm run claude` | 启动 Claude 管理器 |
 | `npm run build` | 编译 TypeScript |
-| `npm run clean` | 清理编译输出 |
+| `npm run tauri:dev` | Tauri 开发模式 |
+| `npm run tauri:build` | 构建 Windows 安装包 |
 
-## 项目结构
+## 配置文件位置
 
-```
-OpenColony/
-├── src/                      # 统一入口
-│   └── index.ts              # 主入口文件
-├── scheduler/                # 调度中心
-│   └── src/
-│       ├── index.ts          # 调度器入口
-│       ├── master.ts         # Master 节点
-│       ├── plan-executor.ts  # Plan Executor
-│       └── worker-manager.ts # Worker 管理器
-├── claude-multi-runner/      # Claude PTY 管理器
-│   ├── main.ts               # PTY 管理器入口
-│   ├── manager.ts            # 终端管理器
-│   └── virtual-screen.ts     # 虚拟屏幕
-├── package.json              # 统一依赖管理
-└── tsconfig.json             # TypeScript 配置
-```
-
-## 配置说明
-
-### 环境变量
-
-调度中心需要配置 `.env` 文件：
-
-```bash
-# scheduler/.env
-ANTHROPIC_API_KEY=your_api_key_here
-```
-
-### TypeScript 配置
-
-根目录的 `tsconfig.json` 已配置包含所有子项目的源代码。
+| 文件 | 路径 | 用途 |
+|------|------|------|
+| `.env` | 项目根目录 | API Key、API Base、模型名称 |
+| `~/.opencolony/config.json` | 用户目录 | Claude 路径、最大 Agent 数、运行模式 |
+| `scheduler/config/role.json` | 项目目录 | 角色配置 |
+| `scheduler/config/skill.json` | 项目目录 | 技能配置 |
 
 ## 常见问题
 
 ### 1. 依赖安装失败
 
-确保 Node.js 版本 >= 18.0.0：
+确保 Node.js >= 18：
 
 ```bash
 node --version
 ```
 
 ### 2. 找不到模块
-
-重新安装依赖：
 
 ```bash
 rm -rf node_modules package-lock.json
@@ -125,36 +125,15 @@ npm install
 
 ### 3. TypeScript 编译错误
 
-检查 tsconfig.json 配置：
-
 ```bash
 npx tsc --noEmit
 ```
 
-## 从旧版本迁移
+### 4. Tauri 编译错误
 
-如果您之前使用子目录的独立 package.json：
+参考 [BUILD.md](BUILD.md) 中的常见问题章节。
 
-1. 删除子目录的 `node_modules`
-2. 在根目录运行 `npm install`
-3. 使用新的 npm scripts 启动服务
+## 相关文档
 
-```bash
-# 旧方式（不推荐）
-cd scheduler && npm start
-
-# 新方式（推荐）
-npm run scheduler
-```
-
-## 开发建议
-
-1. 使用 `npm run dev` 进行开发，支持热重载
-2. 提交前运行 `npm run build` 确保编译通过
-3. 使用 TypeScript 类型检查避免运行时错误
-
-## 更多信息
-
-- 调度中心文档：`scheduler/README.md`
-- Claude PTY 文档：`claude-multi-runner/README.md`
-- 项目许可证：MIT
+- [项目说明](README.md)
+- [构建指南](BUILD.md)
