@@ -50,71 +50,6 @@ npm start run pty "分析当前目录结构"
 npm start claude 1 "查看当前目录"
 ```
 
-## 项目结构
-
-```
-OpenColony/
-├── src/                          # 统一 CLI 入口
-│   └── index.ts
-├── scheduler/                    # 调度中心
-│   ├── src/
-│   │   ├── index.ts              # 调度器入口
-│   │   ├── master.ts             # Master 节点
-│   │   ├── plan-executor.ts      # Plan Executor
-│   │   ├── worker-manager.ts     # Worker 管理器
-│   │   ├── arbitration-engine.ts # 仲裁引擎
-│   │   ├── claude-link.ts        # Claude 连接层
-│   │   ├── llm-client.ts         # LLM 客户端
-│   │   ├── message-db.ts         # 消息数据库
-│   │   ├── role-manager.ts       # 角色管理
-│   │   ├── logger.ts             # 日志模块
-│   │   └── types.ts              # 类型定义
-│   └── config/
-│       ├── role.json             # 角色配置
-│       ├── skill.json            # 技能配置
-│       └── settings.json         # 调度器设置
-├── claude-multi-runner/          # Claude 管理器
-│   ├── main.ts                   # 入口
-│   ├── manager.ts                # 统一管理器
-│   ├── backends/
-│   │   ├── sdk-client.ts        # SDK 客户端
-│   │   ├── node-pty-backend.ts  # PTY 后端
-│   │   ├── pty-selector.ts      # PTY 选择器
-│   │   └── virtual-screen.ts    # 虚拟屏幕
-│   ├── hooks/                    # 完成标记脚本
-│   ├── utils/
-│   │   ├── git-bash.ts          # Git Bash 工具
-│   │   └── logger.ts            # 日志模块
-│   └── types.ts
-├── src-tauri/                    # Tauri 桌面应用
-│   ├── src/
-│   │   ├── main.rs              # 入口 + Tauri 构建
-│   │   ├── commands.rs          # Tauri 命令
-│   │   ├── models.rs            # 数据结构
-│   │   ├── paths.rs             # 路径辅助
-│   │   └── utils.rs             # 工具函数
-│   ├── icons/                    # 应用图标
-│   ├── tauri.conf.json           # Tauri 配置
-│   └── Cargo.toml                # Rust 依赖
-├── ui/                           # 前端界面
-│   ├── index.html
-│   ├── styles.css
-│   ├── common.js                 # 公共工具 + 初始化
-│   ├── chat.js                   # 对话 + 任务提交
-│   ├── tasks.js                  # 任务日志
-│   ├── roles.js                  # 角色管理
-│   ├── skills.js                 # 技能管理
-│   └── settings.js               # 系统设置
-├── scripts/                      # 构建脚本
-│   ├── generate-ico.js
-│   └── generate-icons.js
-├── .env.example                  # 环境变量示例
-├── package.json
-├── tsconfig.json
-├── BUILD.md                      # 构建指南
-└── STARTUP.md                    # 启动指南
-```
-
 ## 可用脚本
 
 | 命令 | 说明 |
@@ -129,34 +64,51 @@ OpenColony/
 
 ## 核心功能
 
-### 1. 桌面应用 (Tauri)
+### 三层调度架构
 
-- 系统配置管理（API Key、模型、Claude 路径等）
-- 角色与技能的查看和管理
-- 从 Claude 目录加载技能
-- 任务提交与日志查看
-- 大模型/Claude 连接测试
+系统采用 Master → Plan Executor → Worker 三层架构，将复杂任务自动拆解为可并行的子任务图：
 
-### 2. 调度中心 (scheduler)
+- **Master**：接收用户需求，调用 LLM 将需求拆解为子任务列表，构建 DAG 依赖图，协调全局执行流程，汇总各 Worker 结果输出最终答案
+- **Plan Executor**：按 DAG 层级调度子任务，同层子任务并行分派给 Worker，管理子任务状态流转（pending → running → completed/failed），处理重试和超时
+- **Worker Manager**：为每个子任务创建 Worker 实例，注入角色 prompt 和同层团队信息，跟踪执行进度，收集输出结果
 
-**SDK 模式（默认）**：
-- 使用 Claude Agent SDK 执行任务
-- 无需安装 Claude CLI
-- 响应更快，适合自动化场景
+### 双模式运行
 
-**PTY 模式**：
-- 使用 node-pty 创建真实终端
-- 支持完整的交互式体验
+- **SDK 模式（默认）**：直接调用 Anthropic API，无需安装 Claude CLI，响应更快，支持 Worker 间通信协作（send_to / broadcast / ask_help）
+- **PTY 模式**：通过 node-pty 创建真实终端进程，运行 Claude CLI，支持完整交互式体验，虚拟屏幕捕获输出
 
-**架构组成**：
-- **Master 节点**：任务规划和调度
-- **Plan Executor**：执行计划和管理子任务
-- **Worker 管理器**：管理 Worker 集群
-- **仲裁引擎**：结果验证和冲突解决
+### DAG 并行执行
 
-### 3. Claude 管理器 (claude-multi-runner)
+子任务按依赖关系构建有向无环图（DAG），同层任务并行执行，跨层任务串行等待。Plan Executor 按层级推进，每层所有 Worker 完成后才进入下一层，最大化并行度的同时保证依赖正确性。
 
-支持 SDK 和 PTY 两种模式统一管理 Claude 会话，提供虚拟屏幕输出捕获。
+### 仲裁引擎
+
+当同一子任务由多个 Worker 执行时，仲裁引擎对多份输出进行评判，支持两种仲裁模式：
+- **置信度投票（confidence_vote）**：各 Worker 给出置信度分数，取最高者
+- **优先级排序（agent_priority）**：按角色优先级选择，如 Review Agent 优先于 Code Agent
+
+### ClaudeLink 通信总线
+
+基于 SQLite + WAL 模式的去中心化通信系统，Worker 间无需中央路由即可互相发送消息：
+- **定向发送**：`send_to(target, message)` 向指定 Worker 发送消息
+- **紧急发送**：`send_to_high(target, message)` 高优先级消息，确保送达
+- **广播**：`broadcast(message)` 向所有同层 Worker 广播消息
+- **求助**：`ask_help(question)` 向同层 Worker 请求协助
+- 所有消息持久化到 SQLite，支持跨进程访问，自动过期清理
+
+### 角色与技能系统
+
+- **角色（Role）**：定义 Worker 的身份和行为规范，如 Code Agent、Data Agent、Review Agent 等，每个角色包含 system prompt、工具权限和优先级配置
+- **技能（Skill）**：从 Claude 目录加载的技能描述文件，为 Worker 提供特定领域知识（如 Worker 通信协议），执行时注入到 Worker 的上下文中
+
+### 桌面应用
+
+基于 Tauri 的跨平台桌面应用，提供可视化操作界面：
+- **对话工作区**：提交任务需求，查看 Master 调度输出和最终结果
+- **任务日志**：浏览历史任务列表，查看每个任务的完整日志
+- **角色管理**：查看和了解各 Worker 角色的配置
+- **技能管理**：从 Claude 目录加载、搜索、筛选技能，保存到本地配置
+- **系统设置**：配置 API Key、模型、Claude 路径等，支持连接测试
 
 ## 配置说明
 
