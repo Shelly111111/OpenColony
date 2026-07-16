@@ -1,8 +1,12 @@
 /**
  * 调度中心日志工具
+ * 支持 LOG_FORMAT=json 环境变量，输出结构化 JSON 日志行供 Tauri 实时解析
  */
 
 import * as fs from "fs";
+
+// 是否启用 JSON 输出格式（由 Tauri 后端通过环境变量控制）
+const JSON_OUTPUT = process.env.LOG_FORMAT === 'json';
 
 function writeToLog(logFile: string, content: string): void {
   const timestamp = new Date().toISOString();
@@ -33,7 +37,20 @@ export function log(options: {
   // 静默模式：只写文件，不输出终端
   if (silent) return;
 
-  // 输出到终端
+  // JSON 格式输出（供 Tauri 实时流式解析）
+  if (JSON_OUTPUT) {
+    const entry = JSON.stringify({
+      prefix: prefix || '',
+      message,
+      level,
+      timestamp: new Date().toISOString(),
+    });
+    // 使用 __LOG__: 前缀标记，方便 Rust 端识别结构化日志行
+    console.log(`__LOG__:${entry}`);
+    return;
+  }
+
+  // 人类可读格式输出（终端直接运行时）
   const levelPrefix = level === 'error' ? '\x1b[31m[ERROR]\x1b[0m ' :
     level === 'warn' ? '\x1b[33m[WARN]\x1b[0m ' : '';
 
