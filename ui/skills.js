@@ -112,23 +112,25 @@ function renderSkills(skills) {
   document.getElementById('statTotal').textContent = allSkills.length;
 
   if (skills.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-row">无匹配Skill</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-row">无匹配Skill</td></tr>';
     return;
   }
 
   skills.forEach(skill => {
+    const allIndex = allSkills.findIndex(s => s.id === skill.id);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>
         <div class="skill-name-cell">
           <div class="skill-icon">${skill.icon}</div>
-          <span class="skill-name">${skill.name}</span>
+          <span class="skill-name">${escapeHtml(skill.name)}</span>
         </div>
       </td>
-      <td>${skill.description}</td>
+      <td>${escapeHtml(skill.description)}</td>
       <td><span class="category-tag ${skill.category}">${skill.category}</span></td>
       <td>${skill.version}</td>
       <td><span class="status-tag ${skill.status}">${skill.status}</span></td>
+      <td><button class="edit-btn-sm" onclick="openSkillEditor(${allIndex})" title="编辑">✏️</button></td>
     `;
     tbody.appendChild(tr);
   });
@@ -138,4 +140,67 @@ function updateSkillStats() {
   document.getElementById('statTotal').textContent = allSkills.length;
   document.getElementById('statActive').textContent = allSkills.filter(s => s.status === '活跃').length;
   document.getElementById('statPending').textContent = allSkills.filter(s => s.status === '待更新').length;
+}
+
+// ==================== 技能编辑弹窗 ====================
+
+function openSkillEditor(index) {
+  const skill = allSkills[index];
+  if (!skill) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'skillEditOverlay';
+  overlay.onclick = function(e) { if (e.target === overlay) closeSkillEditor(); };
+
+  overlay.innerHTML = `
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>编辑技能</h3>
+        <button class="modal-close" onclick="closeSkillEditor()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>技能ID（不可修改）</label>
+          <input type="text" class="form-input" value="${escapeHtml(skill.id)}" disabled />
+        </div>
+        <div class="form-group">
+          <label>名称</label>
+          <input type="text" class="form-input" id="editSkillName" value="${escapeHtml(skill.name)}" />
+        </div>
+        <div class="form-group">
+          <label>描述</label>
+          <textarea class="form-textarea" id="editSkillDesc" rows="4">${escapeHtml(skill.description)}</textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-outline" onclick="closeSkillEditor()">取消</button>
+        <button class="btn-primary" onclick="saveSkillEdit(${index})">保存</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+}
+
+function closeSkillEditor() {
+  const overlay = document.getElementById('skillEditOverlay');
+  if (overlay) overlay.remove();
+}
+
+async function saveSkillEdit(index) {
+  const name = document.getElementById('editSkillName').value.trim();
+  const desc = document.getElementById('editSkillDesc').value.trim();
+
+  if (!name) {
+    showToast('名称不能为空', 'error');
+    return;
+  }
+
+  allSkills[index].name = name;
+  allSkills[index].description = desc;
+
+  await saveSkills();
+  filterSkills();
+  closeSkillEditor();
 }

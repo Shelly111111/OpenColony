@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Stdio;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -230,16 +230,16 @@ pub fn get_task_log_content(task_dir: String, file_name: String) -> Result<LogCo
 
 // ==================== 角色 ====================
 
+#[derive(Serialize, Deserialize)]
+struct RoleFile {
+    roles: Vec<AgentRole>,
+}
+
 #[tauri::command]
 pub fn get_agent_roles() -> Vec<AgentRole> {
     let role_file = paths::scheduler_config_dir().join("role.json");
     if !role_file.exists() {
         return Vec::new();
-    }
-
-    #[derive(Deserialize)]
-    struct RoleFile {
-        roles: Vec<AgentRole>,
     }
 
     match fs::read_to_string(&role_file) {
@@ -249,6 +249,26 @@ pub fn get_agent_roles() -> Vec<AgentRole> {
             parsed.roles
         }
         Err(_) => Vec::new(),
+    }
+}
+
+#[tauri::command]
+pub fn save_agent_roles(roles_json: String) -> TaskResult {
+    let role_file_path = paths::scheduler_config_dir().join("role.json");
+
+    let roles: Vec<AgentRole> = match serde_json::from_str(&roles_json) {
+        Ok(r) => r,
+        Err(e) => return TaskResult::err(&format!("JSON 解析失败: {}", e)),
+    };
+
+    let role_file = RoleFile { roles };
+
+    match serde_json::to_string_pretty(&role_file) {
+        Ok(content) => match fs::write(role_file_path, content) {
+            Ok(_) => TaskResult::ok("角色保存成功"),
+            Err(e) => TaskResult::err(&format!("写入文件失败: {}", e)),
+        },
+        Err(e) => TaskResult::err(&format!("序列化失败: {}", e)),
     }
 }
 

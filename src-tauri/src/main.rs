@@ -26,6 +26,7 @@ fn main() {
             commands::get_task_list,
             commands::get_task_log_content,
             commands::get_agent_roles,
+            commands::save_agent_roles,
             commands::get_skills,
             commands::get_skills_from_claude,
             commands::save_skills_to_file,
