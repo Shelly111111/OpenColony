@@ -44,7 +44,7 @@ export class WorkerManager {
   async createWorker(workerType: string, logDir?: string): Promise<WorkerInstance> {
     for (const worker of this.workers.values()) {
       if (worker.status === "idle" && worker.type === workerType) {
-        log({ message: `[WorkerManager] 复用现有Worker ${worker.id}，类型: ${workerType}` });
+        log({ prefix: 'WorkerManager', message: `复用现有Worker ${worker.id}，类型: ${workerType}` });
         return worker;
       }
     }
@@ -60,11 +60,11 @@ export class WorkerManager {
     if (logDir) {
       const logFileName = `WorkerManager_${workerId}.log`;
       worker.logFile = path.join(logDir, logFileName);
-      this.writeLog(worker.logFile, `[WorkerManager] 创建Worker ${workerId}，类型: ${workerType}`);
+      this.writeLog(worker.logFile, `创建Worker ${workerId}，类型: ${workerType}`);
     }
 
     this.workers.set(workerId, worker);
-    log({ message: `[WorkerManager] 创建新Worker ${workerId}，类型: ${workerType}` });
+    log({ prefix: 'WorkerManager', message: `创建新Worker ${workerId}，类型: ${workerType}` });
 
     return worker;
   }
@@ -74,7 +74,7 @@ export class WorkerManager {
    */
   releaseWorker(workerId: string): void {
     this.workers.delete(workerId);
-    log({ message: `[WorkerManager] 释放Worker实例: ${workerId}` });
+    log({ prefix: 'WorkerManager', message: `释放Worker实例: ${workerId}` });
   }
 
   /**
@@ -83,7 +83,7 @@ export class WorkerManager {
    * @param worker 可选：已创建的Worker实例
    */
   async executeSubTask(subTask: SubTask, traceId: string, logDir?: string, worker?: WorkerInstance): Promise<WorkerOutput> {
-    log({ message: `[WorkerManager] 分配子任务 ${subTask.id} 到Worker，类型: ${subTask.workerType}，模式: ${this.runMode}` });
+    log({ prefix: 'WorkerManager', message: `分配子任务 ${subTask.id} 到Worker，类型: ${subTask.workerType}，模式: ${this.runMode}` });
 
     const targetWorker = worker || await this.createWorker(subTask.workerType, logDir);
     targetWorker.currentTaskId = subTask.id;
@@ -95,12 +95,12 @@ export class WorkerManager {
     try {
       const result = await this.runTaskWithManager(targetWorker, subTask, traceId, logFile, this.runMode);
 
-      log({ message: `[WorkerManager] 子任务 ${subTask.id} 执行完成，状态: ${result.status}` });
+      log({ prefix: 'WorkerManager', message: `子任务 ${subTask.id} 执行完成，状态: ${result.status}` });
 
       return result;
 
     } catch (error) {
-      log({ message: `[WorkerManager] 子任务 ${subTask.id} 执行异常: ${error}`, level: 'error' });
+      log({ prefix: 'WorkerManager', message: `子任务 ${subTask.id} 执行异常: ${error}`, level: 'error' });
       return {
         status: "fail",
         data: null,
@@ -145,14 +145,14 @@ export class WorkerManager {
 
       // 设置SIGINT处理
       const sigintHandler = () => {
-        log({ message: "正在终止终端...", level: 'warn' });
+        log({ prefix: 'WorkerManager', message: "正在终止终端...", level: 'warn' });
         manager.killAll();
         process.exit(0);
       };
       process.on("SIGINT", sigintHandler);
 
       this.writeLog(logFile, `[${mode.toUpperCase()}] 初始化管理器...`);
-      log({ message: `[WorkerManager] Worker ${worker.id} 初始化 ${mode.toUpperCase()} 管理器...` });
+      log({ prefix: 'WorkerManager', message: `Worker ${worker.id} 初始化 ${mode.toUpperCase()} 管理器...` });
 
       await manager.initialize();
 
@@ -162,7 +162,7 @@ export class WorkerManager {
 
       // 执行命令
       this.writeLog(logFile, `[${mode.toUpperCase()}] 开始执行命令...`);
-      log({ message: `[WorkerManager] Worker ${worker.id} 执行 ${mode.toUpperCase()} 命令...` });
+      log({ prefix: 'WorkerManager', message: `Worker ${worker.id} 执行 ${mode.toUpperCase()} 命令...` });
 
       await manager.runAll([command]);
 
@@ -190,7 +190,7 @@ export class WorkerManager {
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      log({ message: `[WorkerManager] ${mode.toUpperCase()}任务执行异常: ${errorMsg}`, level: 'error' });
+      log({ prefix: 'WorkerManager', message: `${mode.toUpperCase()}任务执行异常: ${errorMsg}`, level: 'error' });
       this.writeLog(logFile, `[ERROR] ${mode.toUpperCase()}任务执行异常: ${errorMsg}`);
 
       return {
@@ -267,7 +267,7 @@ export class WorkerManager {
 
     if (!fs.existsSync(fullPath)) {
       fs.mkdirSync(fullPath, { recursive: true });
-      log({ message: `[WorkerManager] 创建日志目录: ${fullPath}` });
+      log({ prefix: 'WorkerManager', message: `创建日志目录: ${fullPath}` });
     }
 
     return fullPath;
@@ -399,7 +399,7 @@ ${cleanedOutput}
 
     } catch (error) {
       this.writeLog(logFile, `[LLM-PARSE] LLM解析异常: ${error}`);
-      log({ message: `[WorkerManager] LLM解析失败，降级到传统解析方法: ${error}`, level: 'error' });
+      log({ prefix: 'WorkerManager', message: `LLM解析失败，降级到传统解析方法: ${error}`, level: 'error' });
 
       // 降级到原来的解析方法
       return this.parseWorkerOutput(rawOutput, worker, traceId);
@@ -450,7 +450,7 @@ ${cleanedOutput}
         };
 
       } catch (e) {
-        log({ message: `[WorkerManager] JSON解析失败，使用原始内容: ${e}`, level: 'warn' });
+        log({ prefix: 'WorkerManager', message: `JSON解析失败，使用原始内容: ${e}`, level: 'warn' });
       }
     }
 
@@ -485,15 +485,15 @@ ${cleanedOutput}
    * 写入日志（静默模式：只写文件不输出终端）
    */
   private writeLog(logFile: string, message: string): void {
-    log({ logFile, message, silent: true });
+    log({ logFile, prefix: 'WorkerManager', message, silent: true });
   }
 
   /**
    * 关闭所有Worker
    */
   async shutdown(): Promise<void> {
-    log({ message: `[WorkerManager] 正在关闭 ${this.workers.size} 个Worker...` });
+    log({ prefix: 'WorkerManager', message: `正在关闭 ${this.workers.size} 个Worker...` });
     this.workers.clear();
-    log({ message: `[WorkerManager] 所有Worker已关闭` });
+    log({ prefix: 'WorkerManager', message: `所有Worker已关闭` });
   }
 }

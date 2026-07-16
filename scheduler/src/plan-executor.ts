@@ -47,22 +47,22 @@ export class PlanExecutor {
    */
   private writePlanLog(masterLogFile: string | undefined, message: string): void {
     if (!masterLogFile) return;
-    log({ logFile: masterLogFile, message, silent: true });
+    log({ logFile: masterLogFile, prefix: 'PlanExecutor', message, silent: true });
   }
 
   /**
    * 规划任务，拆分子任务并构建DAG
    */
   async planTask(task: MainTask): Promise<PlanOutput> {
-    log({ message: `[PlanExecutor] 开始规划任务 ${task.id}` });
+    log({ prefix: 'PlanExecutor', message: `开始规划任务 ${task.id}` });
 
     // 调用LLM进行任务拆分
     const subTasks = await this.splitTaskIntoSubTasksWithLLM(task);
-    log({ message: `[PlanExecutor] 拆分为 ${subTasks.length} 个子任务` });
+    log({ prefix: 'PlanExecutor', message: `拆分为 ${subTasks.length} 个子任务` });
 
     // 构建DAG
     const dag = await this.buildDAG(subTasks);
-    log({ message: `[PlanExecutor] DAG构建完成，包含 ${dag.nodes.size} 个节点，${dag.edges.size} 条边` });
+    log({ prefix: 'PlanExecutor', message: `DAG构建完成，包含 ${dag.nodes.size} 个节点，${dag.edges.size} 条边` });
 
     // 估算执行时间
     const estimatedDuration = this.estimateDuration(subTasks);
@@ -80,9 +80,8 @@ export class PlanExecutor {
    * 支持分层执行和参数传递
    */
   async executeDAG(task: MainTask, workerManager: WorkerManager): Promise<WorkerOutput[]> {
-    log({ message: `[PlanExecutor] 开始执行DAG任务 ${task.id}` });
-    this.writePlanLog(task.masterLogFile, `[PlanExecutor] 开始执行DAG任务 ${task.id}`);
-    this.writePlanLog(task.masterLogFile, `[PlanExecutor] 子任务数量: ${task.subTasks.size}`);
+    log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `开始执行DAG任务 ${task.id}` });
+    this.writePlanLog(task.masterLogFile, `子任务数量: ${task.subTasks.size}`);
 
     // 清空任务输出缓存
     this.taskOutputs.clear();
@@ -98,12 +97,10 @@ export class PlanExecutor {
     for (let i = 0; i < layers.length; i++) {
       const layer = layers[i];
       log({
-        message: `[PlanExecutor] 执行第 ${layer.level + 1}/${layers.length} 层任务，共 ${layer.taskIds.length} 个任务，执行方式: ${this.settings.taskExecution.sameLayerAsync ? '异步' : '同步'}`,
+        logFile: task.masterLogFile,
+        prefix: 'PlanExecutor',
+        message: `执行第 ${layer.level + 1}/${layers.length} 层任务，共 ${layer.taskIds.length} 个任务，执行方式: ${this.settings.taskExecution.sameLayerAsync ? '异步' : '同步'}`,
       });
-      this.writePlanLog(
-        task.masterLogFile,
-        `[PlanExecutor] 执行第 ${layer.level + 1}/${layers.length} 层任务，共 ${layer.taskIds.length} 个任务`
-      );
 
       const layerTasks = layer.taskIds
         .map(taskId => task.subTasks.get(taskId))
@@ -113,7 +110,7 @@ export class PlanExecutor {
       const layerWorkers = await Promise.all(
         layerTasks.map(subTask => workerManager.createWorker(subTask.workerType, task.logDir))
       );
-      log({ message: `[PlanExecutor] 为第 ${layer.level + 1} 层创建了 ${layerWorkers.length} 个Worker` });
+      log({ prefix: 'PlanExecutor', message: `为第 ${layer.level + 1} 层创建了 ${layerWorkers.length} 个Worker` });
 
       // 将Worker关联到对应的SubTask
       for (let i = 0; i < layerTasks.length; i++) {
@@ -128,17 +125,17 @@ export class PlanExecutor {
         for (const worker of layerWorkers) {
           claudeLink!.registerWorker(worker);
         }
-        log({ message: `[PlanExecutor] SDK模式：注册 ${layerWorkers.length} 个Worker到ClaudeLink` });
+        log({ prefix: 'PlanExecutor', message: `SDK模式：注册 ${layerWorkers.length} 个Worker到ClaudeLink` });
         // 注入同层团队信息（只有SDK模式）
         this.injectLayerTeamInfo(layerTasks, task);
       }
 
       // 根据设置决定同层任务的执行方式
       if (this.settings.taskExecution.sameLayerAsync) {
-        log({ message: `[PlanExecutor] 同层任务异步并行执行` });
+        log({ prefix: 'PlanExecutor', message: `同层任务异步并行执行` });
         await this.executeLayerAsync(layerTasks, layerWorkers, task, workerManager, completedTasks, executingTasks, results);
       } else {
-        log({ message: `[PlanExecutor] 同层任务同步串行执行` });
+        log({ prefix: 'PlanExecutor', message: `同层任务同步串行执行` });
         await this.executeLayerSync(layerTasks, layerWorkers, task, workerManager, completedTasks, executingTasks, results);
       }
 
@@ -150,12 +147,10 @@ export class PlanExecutor {
         workerManager.releaseWorker(w.id);
       }
 
-      log({ message: `[PlanExecutor] 第 ${layer.level + 1} 层任务执行完成` });
-      this.writePlanLog(task.masterLogFile, `[PlanExecutor] 第 ${layer.level + 1} 层任务执行完成`);
+      log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `第 ${layer.level + 1} 层任务执行完成` });
     }
 
-    log({ message: `[PlanExecutor] DAG执行完成，共完成 ${completedTasks.size} 个子任务` });
-    this.writePlanLog(task.masterLogFile, `[PlanExecutor] DAG执行完成，共完成 ${completedTasks.size} 个子任务`);
+    log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `DAG执行完成，共完成 ${completedTasks.size} 个子任务` });
     return results;
   }
 
@@ -311,13 +306,14 @@ export class PlanExecutor {
       throw new Error('DAG中存在循环依赖！');
     }
 
-    log({ message: `[PlanExecutor] 拓扑排序完成，共 ${layers.length} 层` });
+    log({ prefix: 'PlanExecutor', message: `拓扑排序完成，共 ${layers.length} 层` });
     layers.forEach(layer => {
       const taskNames = layer.taskIds.map(id => {
         const st = task.subTasks.get(id);
         return st ? st.name : id;
       });
       log({
+        prefix: 'PlanExecutor',
         message: `  第${layer.level + 1}层: ${taskNames.join(', ')} (${this.settings.taskExecution.sameLayerAsync ? '异步' : '同步'})`,
       });
     });
@@ -339,8 +335,7 @@ export class PlanExecutor {
       subTask.status = TaskStatus.RUNNING;
       subTask.startedAt = new Date();
 
-      log({ message: `[PlanExecutor] 开始执行子任务 ${subTask.id}: ${subTask.name}` });
-      this.writePlanLog(task.masterLogFile, `[PlanExecutor] 开始执行子任务 ${subTask.id}: ${subTask.name}`);
+      log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `开始执行子任务 ${subTask.id}: ${subTask.name}` });
 
       if (subTask.dependencies.length > 0) {
         const enhancedCommand = this.buildEnhancedCommand(subTask, task);
@@ -356,10 +351,10 @@ export class PlanExecutor {
         this.taskOutputs.set(subTask.id, output);
       }
 
-      this.writePlanLog(task.masterLogFile, `[PlanExecutor] 子任务 ${subTask.id} 执行完成，状态: ${output.status}`);
+      this.writePlanLog(task.masterLogFile, `子任务 ${subTask.id} 执行完成，状态: ${output.status}`);
 
       if (output.status === "fail" && subTask.retryCount < subTask.maxRetries) {
-        log({ message: `[PlanExecutor] 子任务 ${subTask.id} 失败，重试 ${subTask.retryCount + 1}/${subTask.maxRetries}` });
+        log({ prefix: 'PlanExecutor', message: `子任务 ${subTask.id} 失败，重试 ${subTask.retryCount + 1}/${subTask.maxRetries}` });
         subTask.retryCount++;
         subTask.status = TaskStatus.RETRYING;
         await this.delay(1000 * Math.pow(2, subTask.retryCount));
@@ -367,13 +362,13 @@ export class PlanExecutor {
       }
 
     } catch (error) {
-      log({ message: `[PlanExecutor] 子任务 ${subTask.id} 执行异常: ${error}`, level: 'error' });
+      log({ prefix: 'PlanExecutor', message: `子任务 ${subTask.id} 执行异常: ${error}`, level: 'error' });
       subTask.status = TaskStatus.FAILED;
       subTask.error = error instanceof Error ? error.message : String(error);
       subTask.completedAt = new Date();
 
       if (!this.isCriticalPathTask(subTask, task.dag)) {
-        log({ message: `[PlanExecutor] 子任务 ${subTask.id} 不在关键路径，继续执行其他任务`, level: 'warn' });
+        log({ prefix: 'PlanExecutor', message: `子任务 ${subTask.id} 不在关键路径，继续执行其他任务`, level: 'warn' });
       } else {
         throw error;
       }
@@ -407,7 +402,7 @@ export class PlanExecutor {
     // 将依赖输出追加到命令中
     if (dependencyOutputs.length > 0) {
       const enhancedCommand = subTask.command + '\n' + dependencyOutputs.join('\n');
-      log({ message: `[PlanExecutor] 为任务 ${subTask.name} 添加依赖输出，依赖数量: ${dependencyOutputs.length}` });
+      log({ prefix: 'PlanExecutor', message: `为任务 ${subTask.name} 添加依赖输出，依赖数量: ${dependencyOutputs.length}` });
       return enhancedCommand;
     }
 
@@ -418,7 +413,7 @@ export class PlanExecutor {
    * 使用LLM拆分主任务为子任务
    */
   private async splitTaskIntoSubTasksWithLLM(task: MainTask): Promise<SubTask[]> {
-    log({ message: `[PlanExecutor] 使用LLM进行任务拆分...` });
+    log({ prefix: 'PlanExecutor', message: `使用LLM进行任务拆分...` });
 
     const llm = getLLMClient();
 
@@ -471,9 +466,9 @@ ${roleDescriptions}
       );
     }
 
-    log({ message: `[PlanExecutor] LLM任务拆分成功，获得 ${response.data.subTasks.length} 个子任务` });
+    log({ prefix: 'PlanExecutor', message: `LLM任务拆分成功，获得 ${response.data.subTasks.length} 个子任务` });
     if (response.data.reasoning) {
-      log({ message: `[PlanExecutor] 拆分思路: ${response.data.reasoning}` });
+      log({ prefix: 'PlanExecutor', message: `拆分思路: ${response.data.reasoning}` });
     }
 
     if (response.data.condensedRequest) {
@@ -497,7 +492,7 @@ ${roleDescriptions}
       if (role) {
         workerType = llmSubTask.workerType;
       } else {
-        log({ message: `[PlanExecutor] 未知的workerType: ${llmSubTask.workerType}，使用general_agent`, level: 'warn' });
+        log({ prefix: 'PlanExecutor', message: `未知的workerType: ${llmSubTask.workerType}，使用general_agent`, level: 'warn' });
         workerType = 'general_agent';
       }
 
@@ -692,7 +687,7 @@ ${roleDescriptions}
       subTask.command += '\n\n' + teamInfo;
     }
 
-    log({ message: `[PlanExecutor] 为当前层的 ${layerTasks.length} 个任务注入协作信息` });
+    log({ prefix: 'PlanExecutor', message: `为当前层的 ${layerTasks.length} 个任务注入协作信息` });
   }
 
   /**

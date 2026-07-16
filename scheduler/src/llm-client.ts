@@ -42,8 +42,8 @@ export class LLMClient {
       );
     }
 
-    log({ message: `[LLMClient] 使用API端点: ${baseURL || '默认Anthropic API'}` });
-    log({ message: `[LLMClient] 使用模型: ${this.model}` });
+    log({ prefix: 'LLMClient', message: `使用API端点: ${baseURL || '默认Anthropic API'}` });
+    log({ prefix: 'LLMClient', message: `使用模型: ${this.model}` });
     this.client = new Anthropic({
       apiKey,
       baseURL: baseURL || undefined
@@ -68,7 +68,7 @@ export class LLMClient {
     } = options || {};
 
     try {
-      log({ message: `[LLMClient] 调用LLM，模型: ${this.model}` });
+      log({ prefix: 'LLMClient', message: `调用LLM，模型: ${this.model}` });
 
       const response = await this.client.messages.create({
         model: this.model,
@@ -86,7 +86,7 @@ export class LLMClient {
         .map(block => block.text)
         .join('\n');
 
-      log({ message: `[LLMClient] LLM调用成功，输入: ${response.usage?.input_tokens} tokens，输出: ${response.usage?.output_tokens} tokens` });
+      log({ prefix: 'LLMClient', message: `LLM调用成功，输入: ${response.usage?.input_tokens} tokens，输出: ${response.usage?.output_tokens} tokens` });
 
       return {
         success: true,
@@ -97,7 +97,7 @@ export class LLMClient {
         }
       };
     } catch (error) {
-      log({ message: `[LLMClient] LLM调用失败: ${error}`, level: 'error' });
+      log({ prefix: 'LLMClient', message: `LLM调用失败: ${error}`, level: 'error' });
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error)
@@ -149,8 +149,8 @@ export class LLMClient {
       const data = JSON.parse(jsonStr) as T;
       return { success: true, data };
     } catch (error) {
-      log({ message: `[LLMClient] JSON解析失败: ${error}`, level: 'error' });
-      log({ message: `[LLMClient] 原始内容: ${jsonStr}`, level: 'error' });
+      log({ prefix: 'LLMClient', message: `JSON解析失败: ${error}`, level: 'error' });
+      log({ prefix: 'LLMClient', message: `原始内容: ${jsonStr}`, level: 'error' });
       return {
         success: false,
         error: `JSON解析失败: ${error instanceof Error ? error.message : String(error)}`

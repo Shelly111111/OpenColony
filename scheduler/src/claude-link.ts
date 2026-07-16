@@ -25,7 +25,7 @@ export class ClaudeLink extends EventEmitter {
       try {
         this.db.cleanupExpiredMessages(this.config.messageRetentionDays);
       } catch (error) {
-        log({ message: `[ClaudeLink] 清理过期消息失败: ${error}`, level: 'error' });
+        log({ prefix: 'ClaudeLink', message: `清理过期消息失败: ${error}`, level: 'error' });
       }
     }, 60000);
   }
@@ -39,13 +39,13 @@ export class ClaudeLink extends EventEmitter {
 
   public registerWorker(worker: WorkerInstance): void {
     this.workers.set(worker.id, worker);
-    log({ message: `[ClaudeLink] Worker 注册成功: ${worker.id} (类型: ${worker.type})` });
+    log({ prefix: 'ClaudeLink', message: `Worker 注册成功: ${worker.id} (类型: ${worker.type})` });
     this.emit("workerRegistered", worker);
   }
 
   public unregisterWorker(workerId: string): void {
     this.workers.delete(workerId);
-    log({ message: `[ClaudeLink] Worker 已注销: ${workerId}` });
+    log({ prefix: 'ClaudeLink', message: `Worker 已注销: ${workerId}` });
     this.emit("workerUnregistered", workerId);
   }
 
@@ -100,7 +100,7 @@ export class ClaudeLink extends EventEmitter {
     };
 
     this.db.insertMessage(message);
-    log({ message: `[ClaudeLink] 消息发送: ${fromWorkerId} -> ${toWorkerId} (优先级: ${priority})` });
+    log({ prefix: 'ClaudeLink', message: `消息发送: ${fromWorkerId} -> ${toWorkerId} (优先级: ${priority})` });
 
     this.emit(`message:${toWorkerId}`, message);
 
@@ -126,7 +126,7 @@ export class ClaudeLink extends EventEmitter {
       }
     }
 
-    log({ message: `[ClaudeLink] 广播消息: ${fromWorkerId} -> ${messages.length} 个Worker` });
+    log({ prefix: 'ClaudeLink', message: `广播消息: ${fromWorkerId} -> ${messages.length} 个Worker` });
     this.emit("broadcast", { fromWorkerId, content, messages });
 
     return messages;
@@ -134,7 +134,7 @@ export class ClaudeLink extends EventEmitter {
 
   public checkInbox(workerId: string): Message[] {
     const messages = this.db.getPendingMessages(workerId);
-    log({ message: `[ClaudeLink] Worker ${workerId} 收件箱有 ${messages.length} 条消息` });
+    log({ prefix: 'ClaudeLink', message: `Worker ${workerId} 收件箱有 ${messages.length} 条消息` });
     return messages;
   }
 
@@ -142,14 +142,14 @@ export class ClaudeLink extends EventEmitter {
     for (const messageId of messageIds) {
       this.db.updateMessageStatus(messageId, MessageStatus.RECEIVED);
     }
-    log({ message: `[ClaudeLink] ${messageIds.length} 条消息标记为已接收` });
+    log({ prefix: 'ClaudeLink', message: `${messageIds.length} 条消息标记为已接收` });
   }
 
   public markAsProcessed(messageIds: string[]): void {
     for (const messageId of messageIds) {
       this.db.updateMessageStatus(messageId, MessageStatus.PROCESSED);
     }
-    log({ message: `[ClaudeLink] ${messageIds.length} 条消息标记为已处理` });
+    log({ prefix: 'ClaudeLink', message: `${messageIds.length} 条消息标记为已处理` });
   }
 
   public onMessage(workerId: string, callback: (message: Message) => void): void {
@@ -174,6 +174,6 @@ export class ClaudeLink extends EventEmitter {
     this.db.close();
     this.workers.clear();
     ClaudeLink.instance = null;
-    log({ message: "[ClaudeLink] 通信总线已关闭" });
+    log({ prefix: 'ClaudeLink', message: "通信总线已关闭" });
   }
 }

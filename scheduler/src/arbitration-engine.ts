@@ -24,7 +24,7 @@ export class ArbitrationEngine {
    * 仲裁多个Worker的输出，合并为最终结果
    */
   async arbitrate(outputs: WorkerOutput[], task: MainTask): Promise<ArbitrationResult> {
-    log({ message: `[ArbitrationEngine] 开始仲裁 ${outputs.length} 个输出，模式: ${this.config.arbitrationMode}` });
+    log({ prefix: 'ArbitrationEngine', message: `开始仲裁 ${outputs.length} 个输出，模式: ${this.config.arbitrationMode}` });
 
     if (outputs.length === 0) {
       return {
@@ -35,7 +35,7 @@ export class ArbitrationEngine {
     }
 
     if (outputs.length === 1) {
-      log({ message: `[ArbitrationEngine] 只有一个输出，直接使用` });
+      log({ prefix: 'ArbitrationEngine', message: `只有一个输出，直接使用` });
       return {
         resolved: true,
         finalOutput: outputs[0].data,
@@ -61,7 +61,7 @@ export class ArbitrationEngine {
    * 选择置信度最高的输出
    */
   private confidenceVoteArbitration(outputs: WorkerOutput[], task: MainTask): ArbitrationResult {
-    log({ message: `[ArbitrationEngine] 使用置信度投票仲裁` });
+    log({ prefix: 'ArbitrationEngine', message: `使用置信度投票仲裁` });
 
     // 按置信度排序
     const sortedOutputs = [...outputs].sort((a, b) => b.confidence - a.confidence);
@@ -71,7 +71,7 @@ export class ArbitrationEngine {
     const topOutputs = sortedOutputs.filter(o => o.confidence === highestConfidence);
 
     if (topOutputs.length === 1) {
-      log({ message: `[ArbitrationEngine] 选择置信度最高的输出: ${highestConfidence}` });
+      log({ prefix: 'ArbitrationEngine', message: `选择置信度最高的输出: ${highestConfidence}` });
       return {
         resolved: true,
         finalOutput: topOutputs[0].data,
@@ -80,7 +80,7 @@ export class ArbitrationEngine {
     }
 
     // 多个输出置信度相同，尝试合并
-    log({ message: `[ArbitrationEngine] 有 ${topOutputs.length} 个输出置信度相同，尝试合并` });
+    log({ prefix: 'ArbitrationEngine', message: `有 ${topOutputs.length} 个输出置信度相同，尝试合并` });
     return this.tryMergeOutputs(topOutputs, task);
   }
 
@@ -89,7 +89,7 @@ export class ArbitrationEngine {
    * 高优先级Agent的输出具有更高权重
    */
   private agentPriorityArbitration(outputs: WorkerOutput[], task: MainTask): ArbitrationResult {
-    log({ message: `[ArbitrationEngine] 使用Agent优先级仲裁` });
+    log({ prefix: 'ArbitrationEngine', message: `使用Agent优先级仲裁` });
 
     // 定义Agent优先级（数值越大优先级越高）
     const agentPriority: Record<string, number> = {
@@ -111,7 +111,7 @@ export class ArbitrationEngine {
     );
 
     if (topOutputs.length === 1) {
-      log({ message: `[ArbitrationEngine] 选择最高优先级Agent ${topOutputs[0].source_agent} 的输出` });
+      log({ prefix: 'ArbitrationEngine', message: `选择最高优先级Agent ${topOutputs[0].source_agent} 的输出` });
       return {
         resolved: true,
         finalOutput: topOutputs[0].data,
@@ -120,7 +120,7 @@ export class ArbitrationEngine {
     }
 
     // 多个同优先级Agent输出，再按置信度排序
-    log({ message: `[ArbitrationEngine] 有 ${topOutputs.length} 个同优先级Agent输出，按置信度选择` });
+    log({ prefix: 'ArbitrationEngine', message: `有 ${topOutputs.length} 个同优先级Agent输出，按置信度选择` });
     return this.confidenceVoteArbitration(topOutputs, task);
   }
 
@@ -129,7 +129,7 @@ export class ArbitrationEngine {
    * 尝试合并多个互补的输出
    */
   private mergeDiffArbitration(outputs: WorkerOutput[], task: MainTask): ArbitrationResult {
-    log({ message: `[ArbitrationEngine] 使用差异合并仲裁` });
+    log({ prefix: 'ArbitrationEngine', message: `使用差异合并仲裁` });
 
     // 尝试合并所有输出
     return this.tryMergeOutputs(outputs, task);
@@ -144,8 +144,8 @@ export class ArbitrationEngine {
     const allSameType = outputTypes.every(t => t === outputTypes[0]);
 
     if (!allSameType) {
-      log({ message: `[ArbitrationEngine] 输出类型不一致: ${outputTypes.join(', ')}`, level: 'warn' });
-      log({ message: `[ArbitrationEngine] 将采用选择置信度最高的单个输出策略` });
+      log({ prefix: 'ArbitrationEngine', message: `输出类型不一致: ${outputTypes.join(', ')}`, level: 'warn' });
+      log({ prefix: 'ArbitrationEngine', message: `将采用选择置信度最高的单个输出策略` });
       const sortedByConfidence = [...outputs].sort((a, b) => b.confidence - a.confidence);
       return {
         resolved: true,
@@ -171,8 +171,8 @@ export class ArbitrationEngine {
           return this.mergePrimitiveOutputs(outputs);
       }
     } catch (error) {
-      log({ message: `[ArbitrationEngine] 合并失败: ${error}`, level: 'error' });
-      log({ message: `[ArbitrationEngine] 合并失败，回退到选择置信度最高的输出` });
+      log({ prefix: 'ArbitrationEngine', message: `合并失败: ${error}`, level: 'error' });
+      log({ prefix: 'ArbitrationEngine', message: `合并失败，回退到选择置信度最高的输出` });
       const sortedByConfidence = [...outputs].sort((a, b) => b.confidence - a.confidence);
       return {
         resolved: true,

@@ -63,7 +63,7 @@ export class MasterScheduler {
 
     // 检查LLM状态
     getLLMClient(); // 确保LLM客户端已初始化
-    log({ message: '[Master] 使用真实LLM模式' });
+    log({ prefix: 'Master', message: '使用真实LLM模式' });
 
     try {
       // 1. 解析用户需求，提取约束和交付标准
@@ -85,13 +85,9 @@ export class MasterScheduler {
       const masterLogFile = path.join(logDir, `Master_${traceId}.log`);
       task.masterLogFile = masterLogFile;
 
-      this.writeMasterLog(masterLogFile, `[Master] 已创建任务 ${task.id}，TraceID: ${traceId}`);
-      this.writeMasterLog(masterLogFile, `[Master] 用户需求: ${userRequest}`);
-      this.writeMasterLog(masterLogFile, `[Master] 日志目录: ${logDir}`);
-
-      log({ message: `[Master] 已创建任务 ${task.id}，TraceID: ${traceId}` });
-      log({ message: `[Master] 用户需求: ${userRequest}` });
-      log({ message: `[Master] 日志目录: ${logDir}` });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `已创建任务 ${task.id}，TraceID: ${traceId}` });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `用户需求: ${userRequest}` });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `日志目录: ${logDir}` });
 
       // 2. 调用Plan模块拆分任务，构建DAG
       task.status = TaskStatus.RUNNING;
@@ -101,17 +97,14 @@ export class MasterScheduler {
       task.subTasks = new Map(planOutput.subTasks.map(st => [st.id, st]));
       task.dag = planOutput.dag;
 
-      this.writeMasterLog(masterLogFile, `[Master] 任务拆分完成，共 ${planOutput.subTasks.length} 个子任务`);
-      this.writeMasterLog(masterLogFile, `[Master] 预估执行时间: ${planOutput.estimatedDuration}秒`);
-
-      log({ message: `[Master] 任务拆分完成，共 ${planOutput.subTasks.length} 个子任务` });
-      log({ message: `[Master] 预估执行时间: ${planOutput.estimatedDuration}秒` });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `任务拆分完成，共 ${planOutput.subTasks.length} 个子任务` });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `预估执行时间: ${planOutput.estimatedDuration}秒` });
 
       // 3. 执行任务DAG
       const executionResults = await this.planExecutor.executeDAG(task, this.workerManager);
 
       // 4. 校验所有Worker输出
-      log({ message: `[Master] 任务执行完成，开始校验输出` });
+      log({ prefix: 'Master', message: `任务执行完成，开始校验输出` });
       const validOutputs = this.validateOutputs(executionResults);
 
       if (validOutputs.length === 0) {
@@ -119,12 +112,12 @@ export class MasterScheduler {
       }
 
       // 5. 仲裁冲突，合并结果
-      log({ message: `[Master] 开始仲裁合并 ${validOutputs.length} 个有效输出` });
+      log({ prefix: 'Master', message: `开始仲裁合并 ${validOutputs.length} 个有效输出` });
       const arbitrationResult = await this.arbitrationEngine.arbitrate(validOutputs, task);
 
       if (!arbitrationResult.resolved) {
         if (arbitrationResult.requiresUserInput) {
-          log({ message: `[Master] 需要用户输入: ${arbitrationResult.userPrompt}` });
+          log({ prefix: 'Master', message: `需要用户输入: ${arbitrationResult.userPrompt}` });
         }
         throw new Error(`仲裁失败: ${arbitrationResult.conflicts?.join(', ')}`);
       }
@@ -132,16 +125,16 @@ export class MasterScheduler {
       // 6. 如果启用评审，调用独立评审Agent二次校验
       let finalOutput = arbitrationResult.finalOutput;
       if (this.config.enableReview) {
-        log({ message: `[Master] 启动独立评审Agent校验结果` });
+        log({ prefix: 'Master', message: `启动独立评审Agent校验结果` });
         const reviewResult = await this.performReviewWithLLM(finalOutput, task);
 
         if (!reviewResult.passed) {
-          log({ message: `[Master] 评审未通过: ${reviewResult.feedback}`, level: 'warn' });
-          log({ message: `[Master] 将尝试根据评审意见改进...`, level: 'warn' });
+          log({ prefix: 'Master', message: `评审未通过: ${reviewResult.feedback}`, level: 'warn' });
+          log({ prefix: 'Master', message: `将尝试根据评审意见改进...`, level: 'warn' });
 
           // 可以在这里添加改进逻辑
         } else {
-          log({ message: `[Master] 评审通过` });
+          log({ prefix: 'Master', message: `评审通过` });
         }
 
         // 将评审结果也附加到最终输出中
@@ -157,7 +150,7 @@ export class MasterScheduler {
       task.completedAt = new Date();
 
       const duration = (Date.now() - startTime) / 1000;
-      log({ message: `[Master] 任务 ${task.id} 执行完成，耗时 ${duration} 秒` });
+      log({ prefix: 'Master', message: `任务 ${task.id} 执行完成，耗时 ${duration} 秒` });
 
       return {
         success: true,
@@ -168,7 +161,7 @@ export class MasterScheduler {
 
     } catch (error) {
       const duration = (Date.now() - startTime) / 1000;
-      log({ message: `[Master] 任务执行失败: ${error}`, level: 'error' });
+      log({ prefix: 'Master', message: `任务执行失败: ${error}`, level: 'error' });
 
       return {
         success: false,
@@ -216,7 +209,7 @@ export class MasterScheduler {
     return outputs.filter(output => {
       const result = WorkerOutputSchema.safeParse(output);
       if (!result.success) {
-        log({ message: `[Master] 输出校验失败: ${result.error.message}`, level: 'warn' });
+        log({ prefix: 'Master', message: `输出校验失败: ${result.error.message}`, level: 'warn' });
         return false;
       }
       return output.status !== "fail" || output.confidence > 0.5;
@@ -232,7 +225,7 @@ export class MasterScheduler {
     issues?: string[];
     suggestions?: string[];
   }> {
-    log({ message: `[Master] 调用LLM进行评审...` });
+    log({ prefix: 'Master', message: `调用LLM进行评审...` });
 
     const llm = getLLMClient();
 
@@ -283,33 +276,26 @@ ${outputStr}
     });
 
     if (!response.success || !response.data) {
-      log({ message: `[Master] 评审LLM调用失败，默认通过: ${response.error}`, level: 'warn' });
+      log({ prefix: 'Master', message: `评审LLM调用失败，默认通过: ${response.error}`, level: 'warn' });
       return {
         passed: true,
         feedback: '评审过程出现问题，默认通过。错误: ' + response.error
       };
     }
 
-    log({ message: `[Master] 评审完成，结果: ${response.data.passed ? '通过' : '未通过'}, 评分: ${response.data.score || 'N/A'}` });
-    log({ message: `[Master] 评审反馈: ${response.data.feedback}` });
+    log({ prefix: 'Master', message: `评审完成，结果: ${response.data.passed ? '通过' : '未通过'}, 评分: ${response.data.score || 'N/A'}` });
+    log({ prefix: 'Master', message: `评审反馈: ${response.data.feedback}` });
 
     return response.data;
-  }
-
-  /**
-   * 写入Master日志（静默模式：只写文件不输出终端）
-   */
-  private writeMasterLog(logFile: string, message: string): void {
-    log({ logFile, message, silent: true });
   }
 
   /**
    * 关闭调度器，释放所有资源
    */
   async shutdown(): Promise<void> {
-    log({ message: `[Master] 正在关闭调度器...` });
+    log({ prefix: 'Master', message: `正在关闭调度器...` });
     await this.workerManager.shutdown();
     ClaudeLink.getInstance().shutdown();
-    log({ message: `[Master] 调度器已关闭` });
+    log({ prefix: 'Master', message: `调度器已关闭` });
   }
 }
