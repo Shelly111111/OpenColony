@@ -21,6 +21,19 @@ export interface RoleConfig {
   plugins: PluginBind[];
 }
 
+// 技能数据结构（与 skill.json 对齐）
+interface SkillItem {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  sub_skills?: SkillItem[];
+}
+
+interface SkillConfigFile {
+  skills: SkillItem[];
+}
+
 export interface RoleConfigFile {
   roles: RoleConfig[];
 }
@@ -28,11 +41,99 @@ export interface RoleConfigFile {
 export class RoleManager {
   private configPath: string;
   private roles: Map<string, RoleConfig> = new Map();
+  private allSkills: SkillItem[] = [];
 
   constructor(configPath?: string) {
     // 默认配置文件路径：scheduler/config/role.json
     this.configPath = configPath || path.join(__dirname, '../config/role.json');
     this.loadRoles();
+    this.loadSkills();
+  }
+
+  /**
+   * 从 skill.json 加载技能数据
+   */
+  private loadSkills(): void {
+    try {
+      const skillPath = path.join(__dirname, '../config/skill.json');
+      if (!fs.existsSync(skillPath)) {
+        log({ prefix: 'RoleManager', message: `技能配置文件不存在: ${skillPath}`, level: 'warn' });
+        return;
+      }
+      const content = fs.readFileSync(skillPath, 'utf-8');
+      const config: SkillConfigFile = JSON.parse(content);
+      this.allSkills = config.skills || [];
+      log({ prefix: 'RoleManager', message: `已加载 ${this.allSkills.length} 个技能配置` });
+    } catch (error) {
+      log({ prefix: 'RoleManager', message: `加载技能配置失败: ${error}`, level: 'error' });
+    }
+  }
+
+  /**
+   * 根据技能ID查找技能信息（支持纯技能和插件子技能）
+   * 返回 { id, description } 格式，id 为技能标识，description 为技能描述
+   */
+  private resolveSkillInfo(skillId: string): { id: string; description: string } | null {
+    for (const skill of this.allSkills) {
+      if (skill.category === '插件') {
+        // 在插件子技能中查找
+        if (skill.sub_skills) {
+          for (const sub of skill.sub_skills) {
+            if (sub.id === skillId) {
+              return {
+                id: `${skill.id}:${sub.id}`,
+                description: sub.description || '',
+              };
+            }
+          }
+        }
+      } else {
+        if (skill.id === skillId) {
+          return {
+            id: skill.id,
+            description: skill.description || '',
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 获取角色描述（含可用技能及描述），用于LLM提示词
+   */
+  getRoleSkillDescriptions(): string {
+    return this.getAllRoles().map(role => {
+      const parts = [`- ${role.id}：${role.description}`];
+
+      // 收集该角色的所有可用技能
+      const skillLines: string[] = [];
+
+      // 纯技能
+      for (const skillId of role.skills) {
+        const info = this.resolveSkillInfo(skillId);
+        if (info) {
+          skillLines.push(`    - ${info.id}${info.description ? `：${info.description}` : ''}`);
+        }
+      }
+
+      // 插件子技能
+      for (const pb of role.plugins) {
+        for (const subId of pb.skills) {
+          const info = this.resolveSkillInfo(subId);
+          if (info) {
+            skillLines.push(`    - ${info.id}${info.description ? `：${info.description}` : ''}`);
+          }
+        }
+      }
+
+      if (skillLines.length > 0) {
+        parts.push(`  可用技能:`);
+        parts.push(skillLines.join('\n'));
+      }
+
+      return parts.join('\n');
+    }).join('\n');
   }
 
   /**

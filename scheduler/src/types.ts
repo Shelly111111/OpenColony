@@ -10,6 +10,7 @@ export interface LLMPlanSubTask {
   description: string;
   workerType: string;
   dependencies: number[];  // 依赖的子任务索引
+  skill?: string;  // 使用的技能，格式: "pluginName:subSkillId" 或 "skillId"，每个子任务最多一个
 }
 
 export interface LLMPlanResponse {
@@ -76,6 +77,7 @@ export interface SubTask {
   name: string;
   description: string;
   workerType: string;
+  skill?: string;  // 使用的技能，格式: "pluginName:subSkillId" 或 "skillId"
   priority: TaskPriority;
   status: TaskStatus;
   dependencies: string[];

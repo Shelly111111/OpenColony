@@ -417,8 +417,8 @@ export class PlanExecutor {
 
     const llm = getLLMClient();
 
-    // 从 RoleManager 动态获取可用的 Agent 类型列表
-    const roleDescriptions = this.roleManager.getRoleDescriptions();
+    // 从 RoleManager 动态获取可用的 Agent 类型列表（含技能）
+    const roleDescriptions = this.roleManager.getRoleSkillDescriptions();
 
     const systemPrompt = `你是一个任务规划专家，负责将复杂的任务拆分为可执行的子任务。
 
@@ -426,8 +426,9 @@ export class PlanExecutor {
 1. 有清晰的名称和描述
 2. 指定适合的执行Agent类型
 3. 定义正确的依赖关系
+4. 每个子任务最多指定一个skill，skill必须来自该Agent类型的可用技能列表
 
-可用的Agent类型：
+可用的Agent类型及其技能：
 ${roleDescriptions}
 
 请返回JSON格式，格式如下：
@@ -437,7 +438,8 @@ ${roleDescriptions}
       "name": "任务名称",
       "description": "详细任务描述",
       "workerType": "general_agent",
-      "dependencies": [0]  // 依赖的子任务索引，从0开始，空数组表示无依赖
+      "dependencies": [0],  // 依赖的子任务索引，从0开始，空数组表示无依赖
+      "skill": "qsuperpowers:auto-coding"  // 可选，使用的技能，格式为"pluginName:subSkillId"或"skillId"，每个子任务最多一个
     }
   ],
   "estimatedDuration": 1800,  // 预估总时间（秒）
@@ -502,6 +504,7 @@ ${roleDescriptions}
         name: llmSubTask.name,
         description: llmSubTask.description,
         workerType,
+        skill: llmSubTask.skill,  // LLM分配的技能
         priority: TaskPriority.P1,
         status: TaskStatus.PENDING,
         dependencies: [],  // 暂时留空，第二遍填充
@@ -537,7 +540,7 @@ ${roleDescriptions}
     // 精简用户需求：提取关键信息
     const condensedRequest = this.condenseUserRequest(parentTask);
 
-    // 构建命令：systemPrompt + 任务信息 + 原始需求 + 执行要求
+    // 构建命令：systemPrompt + skill + 任务信息 + 原始需求 + 执行要求
     const parts: string[] = [];
 
     // 1. 角色的 systemPrompt
@@ -545,21 +548,26 @@ ${roleDescriptions}
       parts.push(systemPrompt);
     }
 
-    // 2. 任务信息
+    // 2. 如果指定了 skill，注入技能引用
+    if (llmSubTask.skill) {
+      parts.push(`\n请使用技能 "${llmSubTask.skill}" 来完成此任务。`);
+    }
+
+    // 3. 任务信息
     parts.push(`\n任务：${llmSubTask.name}`);
     parts.push(`描述：${llmSubTask.description}`);
 
-    // 3. 原始需求
+    // 4. 原始需求
     parts.push(`\n原始需求：${condensedRequest}`);
 
-    // 4. 执行要求
+    // 5. 执行要求
     parts.push(`\n注意：
 1. 请基于实际情况来分析和执行任务
 2. 如果需要读取文件，请明确指定文件路径
 3. 你的输出必须具体且有针对性，不能给出通用建议
 4. 请给出完整的执行结果，包含具体的代码或方案`);
 
-    // 5. 执行提示
+    // 6. 执行提示
     parts.push(`\n请开始执行任务。`);
 
     return parts.join('\n');
