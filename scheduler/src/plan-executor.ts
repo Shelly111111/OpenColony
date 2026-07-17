@@ -725,7 +725,7 @@ ${roleDescriptions}
     const lines: string[] = [];
     lines.push('## 协作技能');
     lines.push('系统已为你配备 `worker-collaboration` 工具集，可用于与其他 Worker 通讯协作。');
-    lines.push('详细使用说明请阅读技能文件: `.claude/skills/worker-communication.md`');
+    lines.push('详细使用说明请阅读技能文件: `.claude/skills/worker-communication/skill.md`');
     return lines.join('\n');
   }
 }
