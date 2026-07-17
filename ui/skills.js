@@ -82,6 +82,15 @@ function parseClaudeSkills(data) {
     version: s.version || 'v1.0.0',
     status: s.status || '活跃',
     icon: s.icon || '🔧',
+    sub_skills: (s.sub_skills || []).map(sub => ({
+      id: sub.id || sub.name || '',
+      name: sub.name || '',
+      description: sub.description || '',
+      category: sub.category || '子技能',
+      version: sub.version || 'v1.0.0',
+      status: sub.status || '活跃',
+      icon: sub.icon || '📎',
+    })),
   }));
 }
 
@@ -118,22 +127,68 @@ function renderSkills(skills) {
 
   skills.forEach(skill => {
     const allIndex = allSkills.findIndex(s => s.id === skill.id);
+    const hasSubSkills = skill.sub_skills && skill.sub_skills.length > 0;
+    const isPlugin = skill.category === '插件';
+
+    // 主行
     const tr = document.createElement('tr');
+    tr.className = isPlugin ? 'skill-row-plugin' : '';
     tr.innerHTML = `
       <td>
         <div class="skill-name-cell">
+          ${hasSubSkills ? `<button class="expand-btn" onclick="toggleSubSkills('${skill.id}')" title="展开子技能"><span class="expand-arrow" id="arrow-${skill.id}">▶</span></button>` : ''}
           <div class="skill-icon">${skill.icon}</div>
           <span class="skill-name">${escapeHtml(skill.name)}</span>
+          ${hasSubSkills ? `<span class="sub-skill-count">${skill.sub_skills.length}</span>` : ''}
         </div>
       </td>
       <td>${escapeHtml(skill.description)}</td>
       <td><span class="category-tag ${skill.category}">${skill.category}</span></td>
       <td>${skill.version}</td>
       <td><span class="status-tag ${skill.status}">${skill.status}</span></td>
-      <td><button class="edit-btn-sm" onclick="openSkillEditor(${allIndex})" title="编辑">✏️</button></td>
+      <td>${isPlugin ? '' : `<button class="edit-btn-sm" onclick="openSkillEditor(${allIndex})" title="编辑">✏️</button>`}</td>
     `;
     tbody.appendChild(tr);
+
+    // 子技能行
+    if (hasSubSkills) {
+      skill.sub_skills.forEach((sub, subIdx) => {
+        const subTr = document.createElement('tr');
+        subTr.className = 'skill-row-sub';
+        subTr.id = `sub-${skill.id}`;
+        subTr.style.display = 'none';
+        subTr.innerHTML = `
+          <td>
+            <div class="skill-name-cell sub-skill-indent">
+              <div class="skill-icon">${sub.icon}</div>
+              <span class="skill-name">${escapeHtml(sub.name)}</span>
+            </div>
+          </td>
+          <td>${escapeHtml(sub.description)}</td>
+          <td><span class="category-tag 子技能">子技能</span></td>
+          <td>${sub.version}</td>
+          <td><span class="status-tag ${sub.status}">${sub.status}</span></td>
+          <td><button class="edit-btn-sm" onclick="openSubSkillEditor(${allIndex}, ${subIdx})" title="编辑">✏️</button></td>
+        `;
+        tbody.appendChild(subTr);
+      });
+    }
   });
+}
+
+function toggleSubSkills(skillId) {
+  const rows = document.querySelectorAll(`#sub-${CSS.escape(skillId)}`);
+  const arrow = document.getElementById(`arrow-${skillId}`);
+  const isExpanded = rows.length > 0 && rows[0].style.display !== 'none';
+
+  rows.forEach(row => {
+    row.style.display = isExpanded ? 'none' : '';
+  });
+
+  if (arrow) {
+    arrow.textContent = isExpanded ? '▶' : '▼';
+    arrow.classList.toggle('expanded', !isExpanded);
+  }
 }
 
 function updateSkillStats() {
@@ -203,4 +258,73 @@ async function saveSkillEdit(index) {
   await saveSkills();
   filterSkills();
   closeSkillEditor();
+}
+
+// ==================== 子技能编辑弹窗 ====================
+
+function openSubSkillEditor(pluginIndex, subIndex) {
+  const plugin = allSkills[pluginIndex];
+  if (!plugin || !plugin.sub_skills || !plugin.sub_skills[subIndex]) return;
+
+  const sub = plugin.sub_skills[subIndex];
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'subSkillEditOverlay';
+  overlay.onclick = function(e) { if (e.target === overlay) closeSubSkillEditor(); };
+
+  overlay.innerHTML = `
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3>编辑子技能</h3>
+        <button class="modal-close" onclick="closeSubSkillEditor()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>所属插件</label>
+          <input type="text" class="form-input" value="${escapeHtml(plugin.name)}" disabled />
+        </div>
+        <div class="form-group">
+          <label>子技能ID（不可修改）</label>
+          <input type="text" class="form-input" value="${escapeHtml(sub.id)}" disabled />
+        </div>
+        <div class="form-group">
+          <label>名称</label>
+          <input type="text" class="form-input" id="editSubSkillName" value="${escapeHtml(sub.name)}" />
+        </div>
+        <div class="form-group">
+          <label>描述</label>
+          <textarea class="form-textarea" id="editSubSkillDesc" rows="4">${escapeHtml(sub.description)}</textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-outline" onclick="closeSubSkillEditor()">取消</button>
+        <button class="btn-primary" onclick="saveSubSkillEdit(${pluginIndex}, ${subIndex})">保存</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+}
+
+function closeSubSkillEditor() {
+  const overlay = document.getElementById('subSkillEditOverlay');
+  if (overlay) overlay.remove();
+}
+
+async function saveSubSkillEdit(pluginIndex, subIndex) {
+  const name = document.getElementById('editSubSkillName').value.trim();
+  const desc = document.getElementById('editSubSkillDesc').value.trim();
+
+  if (!name) {
+    showToast('名称不能为空', 'error');
+    return;
+  }
+
+  allSkills[pluginIndex].sub_skills[subIndex].name = name;
+  allSkills[pluginIndex].sub_skills[subIndex].description = desc;
+
+  await saveSkills();
+  filterSkills();
+  closeSubSkillEditor();
 }

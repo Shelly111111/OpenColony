@@ -558,6 +558,10 @@ body {
   padding: 4px 10px;
   border-radius: 10px;
 }
+.skill-tag.plugin-tag {
+  background: #fef3c7;
+  color: #92400e;
+}
 
 /* 分页 */
 .pagination {
@@ -1256,6 +1260,168 @@ body {
 .skill-tag.muted {
   background: #f1f5f9;
   color: #94a3b8;
+}
+
+/* 角色编辑 - 技能复选框列表 */
+.skill-checkbox-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+.skill-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.15s;
+  user-select: none;
+}
+.skill-checkbox-item:hover {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+.skill-checkbox-item input[type="checkbox"] {
+  accent-color: #2563eb;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+.skill-checkbox-icon {
+  font-size: 13px;
+}
+.skill-checkbox-name {
+  color: #334155;
+}
+
+/* 绑定插件区域 */
+.plugin-bind-list {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.plugin-bind-item {
+  margin-bottom: 6px;
+}
+.plugin-bind-item:last-child {
+  margin-bottom: 0;
+}
+.plugin-bind-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.plugin-sub-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px 6px 36px;
+}
+.sub-skill-cb-item {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+.plugin-sub-skills-empty {
+  padding: 4px 8px 4px 36px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+.select-all-btn {
+  margin-left: auto;
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 1px 8px;
+  color: #2563eb;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.select-all-btn:hover {
+  background: #eff6ff;
+  border-color: #2563eb;
+}
+
+/* 插件展开按钮 */
+.expand-btn {
+  background: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 2px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.expand-btn:hover {
+  background: #eff6ff;
+  border-color: #2563eb;
+}
+.expand-arrow {
+  font-size: 10px;
+  color: #64748b;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+.expand-arrow.expanded {
+  color: #2563eb;
+}
+
+/* 子技能数量标签 */
+.sub-skill-count {
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 4px;
+}
+
+/* 插件行样式 */
+.skill-row-plugin {
+  background: #fafbff;
+}
+.skill-row-plugin:hover {
+  background: #f0f4ff;
+}
+
+/* 子技能行样式 */
+.skill-row-sub {
+  background: #f8fafc;
+  font-size: 12px;
+}
+.skill-row-sub:hover {
+  background: #f1f5f9;
+}
+.sub-skill-indent {
+  padding-left: 32px !important;
+}
+
+/* 子技能分类标签 */
+.category-tag.子技能 {
+  background: #fef3c7;
+  color: #92400e;
 }
 
 /* 编辑按钮 - 角色卡片 */

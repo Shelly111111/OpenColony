@@ -318,14 +318,38 @@ pub fn get_skills_from_claude(claude_dir: String) -> TaskResult {
                                             .and_then(|v| v.as_str()).unwrap_or("");
                                         let plugin_name = plugin_key.split('@').next().unwrap_or(plugin_key);
 
+                                        // 解析插件下的子技能
+                                        let mut sub_skills: Vec<Skill> = Vec::new();
+                                        let plugin_skills_dir = Path::new(install_path).join("skills");
+                                        if plugin_skills_dir.exists() && plugin_skills_dir.is_dir() {
+                                            if let Ok(entries) = fs::read_dir(&plugin_skills_dir) {
+                                                for sub_entry in entries.filter_map(|e| e.ok()) {
+                                                    let sub_path = sub_entry.path();
+                                                    if sub_path.is_dir() {
+                                                        let sub_skill_id = sub_entry.file_name().to_string_lossy().to_string();
+                                                        let sub_skill_file = sub_path.join("SKILL.md");
+                                                        if sub_skill_file.exists() {
+                                                            if let Ok(content) = fs::read_to_string(&sub_skill_file) {
+                                                                let sub_skill = parse_claude_skill(&sub_skill_id, &content);
+                                                                if !sub_skill.id.is_empty() {
+                                                                    sub_skills.push(sub_skill);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         all_skills.push(Skill {
-                                            id: format!("plugin-{}", plugin_name),
+                                            id: plugin_name.to_string(),
                                             name: format!("{} v{}", plugin_name, name),
                                             description: format!("安装路径: {}", install_path),
                                             category: "插件".to_string(),
                                             version: name.to_string(),
                                             status: "活跃".to_string(),
                                             icon: "🔌".to_string(),
+                                            sub_skills,
                                         });
                                     }
                                 }
@@ -436,6 +460,7 @@ fn parse_claude_skill(skill_id: &str, content: &str) -> Skill {
         version: "v1.0.0".to_string(),
         status: "活跃".to_string(),
         icon: "🎯".to_string(),
+        sub_skills: Vec::new(),
     }
 }
 

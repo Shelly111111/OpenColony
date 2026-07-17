@@ -72,6 +72,14 @@ pub struct SystemStatus {
 
 // ==================== 角色 ====================
 
+/// 插件绑定结构：指定插件及其下绑定的子技能
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PluginBind {
+    pub plugin: String,
+    #[serde(default)]
+    pub skills: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct AgentRole {
     pub id: String,
@@ -79,8 +87,12 @@ pub struct AgentRole {
     pub description: String,
     #[serde(default)]
     pub system_prompt: String,
+    /// 绑定的技能ID列表（非插件技能）
     #[serde(default)]
     pub skills: Vec<String>,
+    /// 绑定的插件列表，每项含插件ID和其下绑定的子技能ID
+    #[serde(default)]
+    pub plugins: Vec<PluginBind>,
     #[serde(default)]
     pub task_count: i64,
     #[serde(default)]
@@ -98,6 +110,8 @@ pub struct Skill {
     pub version: String,
     pub status: String,
     pub icon: String,
+    #[serde(default)]
+    pub sub_skills: Vec<Skill>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

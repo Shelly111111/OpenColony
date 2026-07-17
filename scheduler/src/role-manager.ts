@@ -7,12 +7,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { log } from "./logger";
 
+export interface PluginBind {
+  plugin: string;
+  skills: string[];
+}
+
 export interface RoleConfig {
   id: string;
   name: string;
   description: string;
   systemPrompt: string;
   skills: string[];
+  plugins: PluginBind[];
 }
 
 export interface RoleConfigFile {
@@ -64,21 +70,24 @@ export class RoleManager {
         name: '通用Agent',
         description: '通用任务，可以做任何类型的任务',
         systemPrompt: '你是一个通用助手，可以执行各种类型的任务。',
-        skills: []
+        skills: [],
+        plugins: []
       },
       {
         id: 'code_agent',
         name: '代码Agent',
         description: '代码实现、测试等编程相关任务',
         systemPrompt: '你是一个编程专家。',
-        skills: []
+        skills: [],
+        plugins: []
       },
       {
         id: 'review_agent',
         name: '评审Agent',
         description: '评审、结果验证等',
         systemPrompt: '你是一个严格的代码评审专家。',
-        skills: []
+        skills: [],
+        plugins: []
       }
     ];
 
