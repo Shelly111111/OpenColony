@@ -5,6 +5,7 @@
 import { MasterScheduler } from "./master";
 import { TaskPriority, ArbitrationMode } from "./types";
 import { log } from "./logger";
+import { MessageDB } from "./message-db";
 
 // 导出所有公共类型和类
 export * from "./types";
@@ -45,7 +46,7 @@ async function main() {
 
   // 检查剩余参数是否是命令
   const nextArg = taskArgs[0];
-  const isCommand = ['run', 'test', 'default', 'help'].includes(nextArg);
+  const isCommand = ['run', 'test', 'default', 'query-logs', 'help'].includes(nextArg);
 
   if (!isCommand) {
     // 如果不是命令，则将所有参数作为任务描述，进入默认模式执行
@@ -61,6 +62,9 @@ async function main() {
       break;
     case "test":
       await runTest();
+      break;
+    case "query-logs":
+      runQueryLogs(taskArgs.slice(1));
       break;
     case "default":
       await runDefaultMode(mode);
@@ -295,6 +299,31 @@ async function runCommand(args: string[]) {
     log({ message: `任务执行异常: ${error}`, level: 'error' });
   } finally {
     await scheduler.shutdown();
+  }
+}
+
+/**
+ * 查询日志数据库
+ * 用法: query-logs [traceId] [--list]
+ *   --list: 列出所有 traceId
+ *   traceId: 查询指定 traceId 的日志
+ */
+function runQueryLogs(args: string[]): void {
+  const db = new MessageDB();
+
+  try {
+    if (args.includes('--list') || args.length === 0) {
+      // 列出所有 traceId
+      const traces = db.getLogTraceIds();
+      console.log(JSON.stringify(traces));
+    } else {
+      // 查询指定 traceId 的日志
+      const traceId = args.find(a => !a.startsWith('--')) || '';
+      const logs = db.getLogsByTraceId(traceId);
+      console.log(JSON.stringify(logs));
+    }
+  } finally {
+    db.close();
   }
 }
 

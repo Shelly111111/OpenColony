@@ -632,3 +632,73 @@ pub async fn test_claude_connection() -> TaskResult {
 pub fn get_worker_logs_root() -> String {
     paths::worker_logs_root().display().to_string()
 }
+
+// ==================== 数据库日志查询 ====================
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LogTraceEntry {
+    trace_id: String,
+    task_id: Option<String>,
+    created_at: String,
+    log_count: i64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LogEntry {
+    id: i64,
+    trace_id: Option<String>,
+    task_id: Option<String>,
+    worker_id: Option<String>,
+    prefix: Option<String>,
+    message: String,
+    level: String,
+    created_at: String,
+}
+
+#[tauri::command]
+pub fn get_log_trace_list() -> Result<Vec<LogTraceEntry>, String> {
+    let output = std::process::Command::new("node")
+        .current_dir(paths::project_root())
+        .args(["-r", "ts-node/register", &paths::scheduler_entry().to_string_lossy(), "query-logs", "--list"])
+        .env("LOG_FORMAT", "json")
+        .output()
+        .map_err(|e| format!("执行查询失败: {}", e))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!("查询日志失败: {}", err));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let traces: Vec<LogTraceEntry> = serde_json::from_str(&stdout)
+        .map_err(|e| format!("解析日志数据失败: {}", e))?;
+    Ok(traces)
+}
+
+#[tauri::command]
+pub fn get_logs_by_trace_id(trace_id: String) -> Result<Vec<LogEntry>, String> {
+    let output = std::process::Command::new("node")
+        .current_dir(paths::project_root())
+        .args(["-r", "ts-node/register", &paths::scheduler_entry().to_string_lossy(), "query-logs", &trace_id])
+        .env("LOG_FORMAT", "json")
+        .output()
+        .map_err(|e| format!("执行查询失败: {}", e))?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!("查询日志失败: {}", err));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let logs: Vec<LogEntry> = serde_json::from_str(&stdout)
+        .map_err(|e| format!("解析日志数据失败: {}", e))?;
+    Ok(logs)
+}

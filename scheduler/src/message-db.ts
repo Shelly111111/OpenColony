@@ -16,7 +16,7 @@ export class MessageDB {
     }
 
     this.db = new Database(finalPath, {
-      verbose: console.log,
+      verbose: (msg?: unknown) => { if (msg != null) process.stderr.write(String(msg) + '\n'); },
       timeout: 5000
     });
 
@@ -157,6 +157,17 @@ export class MessageDB {
       ORDER BY created_at ASC
     `);
     return stmt.all(traceId) as any[];
+  }
+
+  getLogTraceIds(): { trace_id: string; task_id: string | null; created_at: string; log_count: number }[] {
+    const stmt = this.db.prepare(`
+      SELECT trace_id, task_id, MIN(created_at) as created_at, COUNT(*) as log_count
+      FROM logs
+      WHERE trace_id IS NOT NULL
+      GROUP BY trace_id
+      ORDER BY created_at DESC
+    `);
+    return stmt.all() as { trace_id: string; task_id: string | null; created_at: string; log_count: number }[];
   }
 
   cleanupOldLogs(retentionDays: number = 7): void {

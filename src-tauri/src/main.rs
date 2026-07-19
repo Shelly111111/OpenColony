@@ -35,6 +35,8 @@ fn main() {
             commands::test_model_connection,
             commands::test_claude_connection,
             commands::get_worker_logs_root,
+            commands::get_log_trace_list,
+            commands::get_logs_by_trace_id,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
