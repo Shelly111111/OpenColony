@@ -45,32 +45,31 @@ export class PlanExecutor {
   /**
    * 写入PlanExecutor日志（写入Master统一日志文件）
    */
-  private writePlanLog(masterLogFile: string | undefined, message: string): void {
+  private writePlanLog(masterLogFile: string | undefined, message: string, traceId?: string, taskId?: string): void {
     if (!masterLogFile) return;
-    log({ logFile: masterLogFile, prefix: 'PlanExecutor', message, silent: true });
+    log({ logFile: masterLogFile, prefix: 'PlanExecutor', message, silent: true, traceId, taskId });
   }
 
   /**
    * 规划任务，拆分子任务并构建DAG
    */
   async planTask(task: MainTask): Promise<PlanOutput> {
-    log({ prefix: 'PlanExecutor', message: `开始规划任务 ${task.id}` });
+    log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `开始规划任务 ${task.id}`, traceId: task.traceId, taskId: task.id });
 
     // 调用LLM进行任务拆分
     const subTasks = await this.splitTaskIntoSubTasksWithLLM(task);
-    log({ prefix: 'PlanExecutor', message: `拆分为 ${subTasks.length} 个子任务` });
+    log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `拆分为 ${subTasks.length} 个子任务`, traceId: task.traceId, taskId: task.id });
 
     // 构建DAG
     const dag = await this.buildDAG(subTasks);
-    log({ prefix: 'PlanExecutor', message: `DAG构建完成，包含 ${dag.nodes.size} 个节点，${dag.edges.size} 条边` });
+    log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `DAG构建完成，包含 ${dag.nodes.size} 个节点，${dag.edges.size} 条边`, traceId: task.traceId, taskId: task.id });
 
-    // 估算执行时间
-    const estimatedDuration = this.estimateDuration(subTasks);
+    // 输出DAG结构
+    this.printDAG(dag, task.masterLogFile, task.traceId, task.id);
 
     return {
       subTasks,
       dag,
-      estimatedDuration,
       requiredWorkers: this.calculateRequiredWorkers(dag)
     };
   }
@@ -80,8 +79,8 @@ export class PlanExecutor {
    * 支持分层执行和参数传递
    */
   async executeDAG(task: MainTask, workerManager: WorkerManager): Promise<WorkerOutput[]> {
-    log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `开始执行DAG任务 ${task.id}` });
-    this.writePlanLog(task.masterLogFile, `子任务数量: ${task.subTasks.size}`);
+    log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `开始执行DAG任务 ${task.id}`, traceId: task.traceId, taskId: task.id });
+    this.writePlanLog(task.masterLogFile, `子任务数量: ${task.subTasks.size}`, task.traceId, task.id);
 
     // 清空任务输出缓存
     this.taskOutputs.clear();
@@ -100,6 +99,8 @@ export class PlanExecutor {
         logFile: task.masterLogFile,
         prefix: 'PlanExecutor',
         message: `执行第 ${layer.level + 1}/${layers.length} 层任务，共 ${layer.taskIds.length} 个任务，执行方式: ${this.settings.taskExecution.sameLayerAsync ? '异步' : '同步'}`,
+        traceId: task.traceId,
+        taskId: task.id
       });
 
       const layerTasks = layer.taskIds
@@ -108,7 +109,7 @@ export class PlanExecutor {
 
       // 为当前层所有任务预创建Worker
       const layerWorkers = await Promise.all(
-        layerTasks.map(subTask => workerManager.createWorker(subTask.workerType, task.logDir))
+        layerTasks.map(subTask => workerManager.createWorker(subTask.workerType, task.logDir, task.traceId, subTask.id))
       );
       log({ prefix: 'PlanExecutor', message: `为第 ${layer.level + 1} 层创建了 ${layerWorkers.length} 个Worker` });
 
@@ -144,13 +145,13 @@ export class PlanExecutor {
         if (isSDKMode) {
           claudeLink!.unregisterWorker(w.id);
         }
-        workerManager.releaseWorker(w.id);
+        workerManager.releaseWorker(w.id, task.traceId, task.id);
       }
 
-      log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `第 ${layer.level + 1} 层任务执行完成` });
+      log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `第 ${layer.level + 1} 层任务执行完成`, traceId: task.traceId, taskId: task.id });
     }
 
-    log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `DAG执行完成，共完成 ${completedTasks.size} 个子任务` });
+    log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `DAG执行完成，共完成 ${completedTasks.size} 个子任务`, traceId: task.traceId, taskId: task.id });
     return results;
   }
 
@@ -335,7 +336,7 @@ export class PlanExecutor {
       subTask.status = TaskStatus.RUNNING;
       subTask.startedAt = new Date();
 
-      log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `开始执行子任务 ${subTask.id}: ${subTask.name}` });
+      log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `开始执行子任务 ${subTask.id}: ${subTask.name}`, traceId: task.traceId, taskId: subTask.id });
 
       if (subTask.dependencies.length > 0) {
         const enhancedCommand = this.buildEnhancedCommand(subTask, task);
@@ -351,7 +352,7 @@ export class PlanExecutor {
         this.taskOutputs.set(subTask.id, output);
       }
 
-      this.writePlanLog(task.masterLogFile, `子任务 ${subTask.id} 执行完成，状态: ${output.status}`);
+      this.writePlanLog(task.masterLogFile, `子任务 ${subTask.id} 执行完成，状态: ${output.status}`, task.traceId, subTask.id);
 
       if (output.status === "fail" && subTask.retryCount < subTask.maxRetries) {
         log({ prefix: 'PlanExecutor', message: `子任务 ${subTask.id} 失败，重试 ${subTask.retryCount + 1}/${subTask.maxRetries}` });
@@ -442,7 +443,6 @@ ${roleDescriptions}
       "skill": "qsuperpowers:auto-coding"  // 可选，使用的技能，格式为"pluginName:subSkillId"或"skillId"，每个子任务最多一个
     }
   ],
-  "estimatedDuration": 1800,  // 预估总时间（秒）
   "reasoning": "拆分思路说明",
   "condensedRequest": "需求摘要：用100-300字精炼概括用户需求的核心内容、关键约束和交付标准，便于子任务执行者快速理解整体目标"
 }
@@ -622,11 +622,71 @@ ${roleDescriptions}
   }
 
   /**
-   * 估算任务执行时间
+   * 打印DAG结构（层号 + 节点名称 + 边）
    */
-  private estimateDuration(subTasks: SubTask[]): number {
-    // 每个任务平均300秒
-    return subTasks.length * 300;
+  private printDAG(dag: DAG, logFile?: string, traceId?: string, taskId?: string): void {
+    // 按层分组
+    const nodeLayers = new Map<string, number>();
+    const visited = new Set<string>();
+    const queue: Array<{ id: string; layer: number }> = [];
+
+    // 找到所有入度为0的节点作为起始层
+    const inDegree = new Map<string, number>();
+    for (const [id] of dag.nodes) {
+      inDegree.set(id, 0);
+    }
+    for (const [, targets] of dag.edges) {
+      for (const target of targets) {
+        inDegree.set(target, (inDegree.get(target) || 0) + 1);
+      }
+    }
+    for (const [id, degree] of inDegree) {
+      if (degree === 0) {
+        queue.push({ id, layer: 0 });
+        visited.add(id);
+      }
+    }
+
+    // BFS分层
+    let maxLayer = 0;
+    while (queue.length > 0) {
+      const { id, layer } = queue.shift()!;
+      nodeLayers.set(id, layer);
+      if (layer > maxLayer) maxLayer = layer;
+      const targets = dag.edges.get(id) || [];
+      for (const target of targets) {
+        if (!visited.has(target)) {
+          visited.add(target);
+          queue.push({ id: target, layer: layer + 1 });
+        } else {
+          // 更新为目标层的最大值
+          const currentLayer = nodeLayers.get(target) || 0;
+          if (layer + 1 > currentLayer) {
+            nodeLayers.set(target, layer + 1);
+            if (layer + 1 > maxLayer) maxLayer = layer + 1;
+          }
+        }
+      }
+    }
+
+    // 按层输出
+    for (let layer = 0; layer <= maxLayer; layer++) {
+      const layerNodes = Array.from(dag.nodes.entries())
+        .filter(([, node]) => nodeLayers.get(node.id) === layer);
+      const nodeNames = layerNodes.map(([, node]) => node.name).join(', ');
+      log({ logFile, prefix: 'PlanExecutor', message: `  层${layer}: ${nodeNames}`, traceId, taskId });
+    }
+
+    // 输出边
+    const edgeList: string[] = [];
+    for (const [from, targets] of dag.edges) {
+      const fromName = dag.nodes.get(from)?.name || from;
+      for (const to of targets) {
+        const toName = dag.nodes.get(to)?.name || to;
+        edgeList.push(`${fromName} -> ${toName}`);
+      }
+    }
+    log({ logFile, prefix: 'PlanExecutor', message: `  边: ${edgeList.join(', ')}`, traceId, taskId });
   }
 
   /**

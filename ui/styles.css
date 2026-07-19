@@ -1425,8 +1425,14 @@ body {
 }
 
 /* 编辑按钮 - 角色卡片 */
-.edit-btn {
+.role-actions {
   margin-left: auto;
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.edit-btn {
   background: none;
   border: none;
   cursor: pointer;
@@ -1439,6 +1445,21 @@ body {
 
 .edit-btn:hover {
   background: #f1f5f9;
+}
+
+.delete-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.delete-btn:hover {
+  background: #fee2e2;
 }
 
 /* 编辑按钮 - 技能表格行 */
@@ -1480,6 +1501,15 @@ body {
   display: flex;
   flex-direction: column;
   animation: slideIn 0.2s ease;
+}
+
+.modal-dialog.small {
+  width: 360px;
+}
+
+.text-muted {
+  color: #94a3b8;
+  font-size: 12px;
 }
 
 .modal-header {

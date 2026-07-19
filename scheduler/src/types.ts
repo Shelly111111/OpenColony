@@ -178,7 +178,6 @@ export interface SchedulerConfig {
 export interface PlanOutput {
   subTasks: SubTask[];
   dag: DAG;
-  estimatedDuration: number;
   requiredWorkers: number;
 }
 

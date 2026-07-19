@@ -107,7 +107,10 @@ function renderAgentRoles() {
             <h4>${escapeHtml(role.name)}</h4>
             <div class="role-desc">${escapeHtml(role.description)}</div>
           </div>
-          <button class="edit-btn" onclick="openRoleEditor(${index})" title="编辑">✏️</button>
+          <div class="role-actions">
+            <button class="edit-btn" onclick="openRoleEditor(${index})" title="编辑">✏️</button>
+            <button class="delete-btn" onclick="deleteRole(${index})" title="删除">🗑️</button>
+          </div>
         </div>
         <div class="role-stats">
           <div class="role-stat">📋 ID: ${role.id}</div>
@@ -124,17 +127,27 @@ function renderAgentRoles() {
 
 // ==================== 角色编辑弹窗 ====================
 
+function openNewRoleEditor() {
+  openRoleEditor(-1);
+}
+
 function openRoleEditor(index) {
-  const role = agentRoles[index];
+  const isNew = index === -1;
+  const role = isNew ? {
+    id: '',
+    name: '',
+    description: '',
+    system_prompt: '',
+    skills: [],
+    plugins: []
+  } : agentRoles[index];
   if (!role) return;
 
-  // 拆分技能和插件
   const plainSkills = allSkills.filter(s => s.category !== '插件');
   const plugins = allSkills.filter(s => s.category === '插件');
   const roleSkills = role.skills || [];
   const rolePlugins = role.plugins || [];
 
-  // 构建 rolePlugins 快查表: pluginId -> Set<subSkillId>
   const pluginBindMap = {};
   rolePlugins.forEach(pb => { pluginBindMap[pb.plugin] = new Set(pb.skills || []); });
 
@@ -146,13 +159,13 @@ function openRoleEditor(index) {
   overlay.innerHTML = `
     <div class="modal-dialog">
       <div class="modal-header">
-        <h3>编辑角色</h3>
+        <h3>${isNew ? '新增角色' : '编辑角色'}</h3>
         <button class="modal-close" onclick="closeRoleEditor()">✕</button>
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label>角色ID（不可修改）</label>
-          <input type="text" class="form-input" value="${escapeHtml(role.id)}" disabled />
+          <label>角色ID${isNew ? '' : '（不可修改）'}</label>
+          <input type="text" class="form-input" id="editRoleId" value="${escapeHtml(role.id)}" ${isNew ? '' : 'disabled'} />
         </div>
         <div class="form-group">
           <label>名称</label>
@@ -227,15 +240,15 @@ function closeRoleEditor() {
 }
 
 async function saveRoleEdit(index) {
+  const isNew = index === -1;
+  const roleId = isNew ? document.getElementById('editRoleId').value.trim() : agentRoles[index].id;
   const name = document.getElementById('editRoleName').value.trim();
   const desc = document.getElementById('editRoleDesc').value.trim();
   const prompt = document.getElementById('editRolePrompt').value.trim();
 
-  // 收集绑定的技能（非插件）
   const skillCbs = document.querySelectorAll('#editRoleSkills .role-skill-cb');
   const selectedSkills = Array.from(skillCbs).filter(cb => cb.checked).map(cb => cb.value);
 
-  // 收集绑定的插件子技能，按插件分组构建 {plugin, skills} 结构
   const pluginCbs = document.querySelectorAll('#editRolePlugins .plugin-sub-cb');
   const pluginGroups = {};
   pluginCbs.forEach(cb => {
@@ -247,20 +260,83 @@ async function saveRoleEdit(index) {
   });
   const selectedPlugins = Object.entries(pluginGroups).map(([plugin, skills]) => ({ plugin, skills }));
 
+  if (isNew && !roleId) {
+    showToast('角色ID不能为空', 'error');
+    return;
+  }
   if (!name) {
     showToast('名称不能为空', 'error');
     return;
   }
 
-  agentRoles[index].name = name;
-  agentRoles[index].description = desc;
-  agentRoles[index].system_prompt = prompt;
-  agentRoles[index].skills = selectedSkills;
-  agentRoles[index].plugins = selectedPlugins;
+  if (isNew) {
+    const exists = agentRoles.some(r => r.id === roleId);
+    if (exists) {
+      showToast('角色ID已存在', 'error');
+      return;
+    }
+    const newRole = {
+      id: roleId,
+      name,
+      description: desc,
+      system_prompt: prompt,
+      skills: selectedSkills,
+      plugins: selectedPlugins
+    };
+    agentRoles.push(newRole);
+  } else {
+    agentRoles[index].name = name;
+    agentRoles[index].description = desc;
+    agentRoles[index].system_prompt = prompt;
+    agentRoles[index].skills = selectedSkills;
+    agentRoles[index].plugins = selectedPlugins;
+  }
 
   await saveAgentRoles();
   renderAgentRoles();
   closeRoleEditor();
+}
+
+function deleteRole(index) {
+  const role = agentRoles[index];
+  if (!role) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'roleDeleteOverlay';
+  overlay.onclick = function(e) { if (e.target === overlay) closeDeleteConfirm(); };
+
+  overlay.innerHTML = `
+    <div class="modal-dialog small">
+      <div class="modal-header">
+        <h3>确认删除</h3>
+        <button class="modal-close" onclick="closeDeleteConfirm()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>确定要删除角色「<strong>${escapeHtml(role.name)}</strong>」吗？</p>
+        <p class="text-muted">此操作不可撤销。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-outline" onclick="closeDeleteConfirm()">取消</button>
+        <button class="btn-primary" style="background: #dc2626; border-color: #dc2626;" onclick="confirmDeleteRole(${index})">删除</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+}
+
+function closeDeleteConfirm() {
+  const overlay = document.getElementById('roleDeleteOverlay');
+  if (overlay) overlay.remove();
+}
+
+async function confirmDeleteRole(index) {
+  agentRoles.splice(index, 1);
+  await saveAgentRoles();
+  renderAgentRoles();
+  closeDeleteConfirm();
+  showToast('角色已删除', 'success');
 }
 
 // ==================== 插件绑定展开/全选 ====================

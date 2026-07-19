@@ -41,10 +41,10 @@ export class WorkerManager {
   /**
    * 创建Worker实例（公共方法，允许预创建）
    */
-  async createWorker(workerType: string, logDir?: string): Promise<WorkerInstance> {
+  async createWorker(workerType: string, logDir?: string, traceId?: string, taskId?: string): Promise<WorkerInstance> {
     for (const worker of this.workers.values()) {
       if (worker.status === "idle" && worker.type === workerType) {
-        log({ prefix: 'WorkerManager', message: `复用现有Worker ${worker.id}，类型: ${workerType}` });
+        log({ logFile: worker.logFile, prefix: 'WorkerManager', message: `复用现有Worker ${worker.id}，类型: ${workerType}`, traceId, taskId, workerId: worker.id });
         return worker;
       }
     }
@@ -60,11 +60,11 @@ export class WorkerManager {
     if (logDir) {
       const logFileName = `WorkerManager_${workerId}.log`;
       worker.logFile = path.join(logDir, logFileName);
-      this.writeLog(worker.logFile, `创建Worker ${workerId}，类型: ${workerType}`);
+      this.writeLog(worker.logFile, `创建Worker ${workerId}，类型: ${workerType}`, traceId, taskId, workerId);
     }
 
     this.workers.set(workerId, worker);
-    log({ prefix: 'WorkerManager', message: `创建新Worker ${workerId}，类型: ${workerType}` });
+    log({ logFile: worker.logFile, prefix: 'WorkerManager', message: `创建新Worker ${workerId}，类型: ${workerType}`, traceId, taskId, workerId });
 
     return worker;
   }
@@ -72,9 +72,10 @@ export class WorkerManager {
   /**
    * 释放Worker实例
    */
-  releaseWorker(workerId: string): void {
+  releaseWorker(workerId: string, traceId?: string, taskId?: string): void {
+    const worker = this.workers.get(workerId);
+    log({ logFile: worker?.logFile, prefix: 'WorkerManager', message: `释放Worker实例: ${workerId}`, traceId, taskId, workerId });
     this.workers.delete(workerId);
-    log({ prefix: 'WorkerManager', message: `释放Worker实例: ${workerId}` });
   }
 
   /**
@@ -83,24 +84,24 @@ export class WorkerManager {
    * @param worker 可选：已创建的Worker实例
    */
   async executeSubTask(subTask: SubTask, traceId: string, logDir?: string, worker?: WorkerInstance): Promise<WorkerOutput> {
-    log({ prefix: 'WorkerManager', message: `分配子任务 ${subTask.id} 到Worker，类型: ${subTask.workerType}，模式: ${this.runMode}` });
-
-    const targetWorker = worker || await this.createWorker(subTask.workerType, logDir);
+    const targetWorker = worker || await this.createWorker(subTask.workerType, logDir, traceId, subTask.id);
     targetWorker.currentTaskId = subTask.id;
     targetWorker.status = "busy";
 
     const logFile = targetWorker.logFile || path.join(logDir || this.createLogDirectory(traceId), `WorkerManager_${targetWorker.id}.log`);
     targetWorker.logFile = logFile;
 
+    log({ logFile, prefix: 'WorkerManager', message: `分配子任务 ${subTask.id} 到Worker，类型: ${subTask.workerType}，模式: ${this.runMode}`, traceId, taskId: subTask.id, workerId: targetWorker.id });
+
     try {
       const result = await this.runTaskWithManager(targetWorker, subTask, traceId, logFile, this.runMode);
 
-      log({ prefix: 'WorkerManager', message: `子任务 ${subTask.id} 执行完成，状态: ${result.status}` });
+      log({ logFile, prefix: 'WorkerManager', message: `子任务 ${subTask.id} 执行完成，状态: ${result.status}`, traceId, taskId: subTask.id, workerId: targetWorker.id });
 
       return result;
 
     } catch (error) {
-      log({ prefix: 'WorkerManager', message: `子任务 ${subTask.id} 执行异常: ${error}`, level: 'error' });
+      log({ logFile, prefix: 'WorkerManager', message: `子任务 ${subTask.id} 执行异常: ${error}`, level: 'error', traceId, taskId: subTask.id, workerId: targetWorker.id });
       return {
         status: "fail",
         data: null,
@@ -128,15 +129,17 @@ export class WorkerManager {
     mode: 'sdk' | 'pty'
   ): Promise<WorkerOutput> {
     const sessionId = this.nextSessionId++;
+    const taskId = subTask.id;
+    const workerId = worker.id;
 
     // 写入日志
-    this.writeLog(logFile, `=== Worker ${worker.id} 开始任务 (${mode.toUpperCase()}模式) ===`);
-    this.writeLog(logFile, `任务ID: ${subTask.id}`);
-    this.writeLog(logFile, `任务名称: ${subTask.name}`);
-    this.writeLog(logFile, `Worker类型: ${worker.type}`);
-    this.writeLog(logFile, `会话ID: ${sessionId}`);
-    this.writeLog(logFile, `TraceID: ${traceId}`);
-    this.writeLog(logFile, `运行模式: ${mode}`);
+    this.writeLog(logFile, `=== Worker ${worker.id} 开始任务 (${mode.toUpperCase()}模式) ===`, traceId, taskId, workerId);
+    this.writeLog(logFile, `任务ID: ${subTask.id}`, traceId, taskId, workerId);
+    this.writeLog(logFile, `任务名称: ${subTask.name}`, traceId, taskId, workerId);
+    this.writeLog(logFile, `Worker类型: ${worker.type}`, traceId, taskId, workerId);
+    this.writeLog(logFile, `会话ID: ${sessionId}`, traceId, taskId, workerId);
+    this.writeLog(logFile, `TraceID: ${traceId}`, traceId, taskId, workerId);
+    this.writeLog(logFile, `运行模式: ${mode}`, traceId, taskId, workerId);
 
     try {
       // 创建独立的 ClaudeUnifiedPtyManager（参照 main.ts）
@@ -145,30 +148,30 @@ export class WorkerManager {
 
       // 设置SIGINT处理
       const sigintHandler = () => {
-        log({ prefix: 'WorkerManager', message: "正在终止终端...", level: 'warn' });
+        log({ logFile, prefix: 'WorkerManager', message: "正在终止终端...", level: 'warn', traceId, taskId, workerId });
         manager.killAll();
         process.exit(0);
       };
       process.on("SIGINT", sigintHandler);
 
-      this.writeLog(logFile, `[${mode.toUpperCase()}] 初始化管理器...`);
-      log({ prefix: 'WorkerManager', message: `Worker ${worker.id} 初始化 ${mode.toUpperCase()} 管理器...` });
+      this.writeLog(logFile, `[${mode.toUpperCase()}] 初始化管理器...`, traceId, taskId, workerId);
+      log({ logFile, prefix: 'WorkerManager', message: `Worker ${worker.id} 初始化 ${mode.toUpperCase()} 管理器...`, traceId, taskId, workerId });
 
       await manager.initialize();
 
       // 格式化命令以适应PTY输入（将多行转换为单行）
       const command = this.formatCommandForPty(subTask.command);
-      this.writeLog(logFile, `[${mode.toUpperCase()}] 执行命令: ${command.substring(0, 200)}...`);
+      this.writeLog(logFile, `[${mode.toUpperCase()}] 执行命令: ${command.substring(0, 200)}...`, traceId, taskId, workerId);
 
       // 执行命令
-      this.writeLog(logFile, `[${mode.toUpperCase()}] 开始执行命令...`);
-      log({ prefix: 'WorkerManager', message: `Worker ${worker.id} 执行 ${mode.toUpperCase()} 命令...` });
+      this.writeLog(logFile, `[${mode.toUpperCase()}] 开始执行命令...`, traceId, taskId, workerId);
+      log({ logFile, prefix: 'WorkerManager', message: `Worker ${worker.id} 执行 ${mode.toUpperCase()} 命令...`, traceId, taskId, workerId });
 
       await manager.runAll([command]);
 
       // 读取输出
-      this.writeLog(logFile, `[${mode.toUpperCase()}] 执行完成，读取输出...`);
-      const output = this.readOutputFromClaudeLogs(sessionId, logFile);
+      this.writeLog(logFile, `[${mode.toUpperCase()}] 执行完成，读取输出...`, traceId, taskId, workerId);
+      const output = this.readOutputFromClaudeLogs(sessionId, logFile, traceId, taskId, workerId);
 
       // 清理：移除SIGINT处理器
       process.removeListener("SIGINT", sigintHandler);
@@ -176,22 +179,22 @@ export class WorkerManager {
       // 关闭管理器
       manager.killAll();
 
-      this.writeLog(logFile, `[${mode.toUpperCase()}] 输出长度: ${output.length}`);
-      this.writeLog(logFile, `[${mode.toUpperCase()}] 输出内容:\n${output.substring(0, 2000)}...`);
+      this.writeLog(logFile, `[${mode.toUpperCase()}] 输出长度: ${output.length}`, traceId, taskId, workerId);
+      this.writeLog(logFile, `[${mode.toUpperCase()}] 输出内容:\n${output}...`, traceId, taskId, workerId);
 
       // 解析输出为标准格式（使用LLM解析混乱的PTY输出）
       const parsedOutput = await this.parseWorkerOutputWithLLM(output, worker, traceId, logFile, mode);
 
-      this.writeLog(logFile, `[RESULT] 解析后的状态: ${parsedOutput.status}`);
-      this.writeLog(logFile, `[RESULT] 置信度: ${parsedOutput.confidence}`);
-      this.writeLog(logFile, `=== 任务结束 ===`);
+      this.writeLog(logFile, `[RESULT] 解析后的状态: ${parsedOutput.status}`, traceId, taskId, workerId);
+      this.writeLog(logFile, `[RESULT] 置信度: ${parsedOutput.confidence}`, traceId, taskId, workerId);
+      this.writeLog(logFile, `=== 任务结束 ===`, traceId, taskId, workerId);
 
       return parsedOutput;
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      log({ prefix: 'WorkerManager', message: `${mode.toUpperCase()}任务执行异常: ${errorMsg}`, level: 'error' });
-      this.writeLog(logFile, `[ERROR] ${mode.toUpperCase()}任务执行异常: ${errorMsg}`);
+      log({ logFile, prefix: 'WorkerManager', message: `${mode.toUpperCase()}任务执行异常: ${errorMsg}`, level: 'error', traceId, taskId, workerId });
+      this.writeLog(logFile, `[ERROR] ${mode.toUpperCase()}任务执行异常: ${errorMsg}`, traceId, taskId, workerId);
 
       return {
         status: "fail",
@@ -221,12 +224,12 @@ export class WorkerManager {
   /**
    * 从claude-logs目录读取输出
    */
-  private readOutputFromClaudeLogs(sessionId: number, logFile: string): string {
+  private readOutputFromClaudeLogs(sessionId: number, logFile: string, traceId?: string, taskId?: string, workerId?: string): string {
     try {
       // Claude的日志在 claude-logs 目录下
       const claudeLogsDir = path.join(process.cwd(), 'claude-logs');
       if (!fs.existsSync(claudeLogsDir)) {
-        this.writeLog(logFile, `[WARN] claude-logs 目录不存在`);
+        this.writeLog(logFile, `[WARN] claude-logs 目录不存在`, traceId, taskId, workerId);
         return '';
       }
 
@@ -239,20 +242,20 @@ export class WorkerManager {
         });
 
       if (logFiles.length === 0) {
-        this.writeLog(logFile, `[WARN] 未找到日志文件`);
+        this.writeLog(logFile, `[WARN] 未找到日志文件`, traceId, taskId, workerId);
         return '';
       }
 
       const latestLog = logFiles[0];
       const content = fs.readFileSync(latestLog, 'utf-8');
 
-      this.writeLog(logFile, `[PTY] 从日志文件读取输出: ${latestLog}`);
-      this.writeLog(logFile, `[PTY] 输出长度: ${content.length}`);
+      this.writeLog(logFile, `[PTY] 从日志文件读取输出: ${latestLog}`, traceId, taskId, workerId);
+      this.writeLog(logFile, `[PTY] 输出长度: ${content.length}`, traceId, taskId, workerId);
 
       return content;
 
     } catch (error) {
-      this.writeLog(logFile, `[ERROR] 读取输出失败: ${error}`);
+      this.writeLog(logFile, `[ERROR] 读取输出失败: ${error}`, traceId, taskId, workerId);
       return '';
     }
   }
@@ -285,10 +288,13 @@ export class WorkerManager {
     logFile: string,
     mode: 'sdk' | 'pty'
   ): Promise<WorkerOutput> {
+    const taskId: string | undefined = worker.currentTaskId;
+    const workerId = worker.id;
+
     try {
       // 如果是 SDK 模式，无需 LLM 解析，直接使用 rawOutput
       if (mode === 'sdk') {
-        this.writeLog(logFile, `[SDK] 跳过 LLM 解析，直接使用原始输出`);
+        this.writeLog(logFile, `[SDK] 跳过 LLM 解析，直接使用原始输出`, traceId, taskId, workerId);
         return {
           status: "success",
           data: rawOutput,
@@ -345,7 +351,7 @@ ${cleanedOutput}
 
 请只返回JSON对象，不要其他解释。`;
 
-      this.writeLog(logFile, `[LLM-PARSE] 使用LLM解析输出，输出长度: ${cleanedOutput.length}`);
+      this.writeLog(logFile, `[LLM-PARSE] 使用LLM解析输出，输出长度: ${cleanedOutput.length}`, traceId, taskId, workerId);
 
       const response = await llmClient.ask(userPrompt, {
         systemPrompt,
@@ -354,7 +360,7 @@ ${cleanedOutput}
       });
 
       if (!response.success || !response.content) {
-        this.writeLog(logFile, `[LLM-PARSE] LLM调用失败: ${response.error}`);
+        this.writeLog(logFile, `[LLM-PARSE] LLM调用失败: ${response.error}`, traceId, taskId, workerId);
         throw new Error(response.error || 'LLM调用失败');
       }
 
@@ -387,19 +393,19 @@ ${cleanedOutput}
           error: parsed.error
         };
 
-        this.writeLog(logFile, `[LLM-PARSE] LLM解析成功，状态: ${result.status} (强制成功)`);
-        this.writeLog(logFile, `[LLM-PARSE] 解析结果: ${JSON.stringify(result)}`);
+        this.writeLog(logFile, `[LLM-PARSE] LLM解析成功，状态: ${result.status} (强制成功)`, traceId, taskId, workerId);
+        this.writeLog(logFile, `[LLM-PARSE] 解析结果: ${JSON.stringify(result)}`, traceId, taskId, workerId);
         return result;
 
       } catch (parseError) {
-        this.writeLog(logFile, `[LLM-PARSE] JSON解析失败: ${parseError}`);
-        this.writeLog(logFile, `[LLM-PARSE] LLM原始输出: ${content.substring(0, 500)}`);
+        this.writeLog(logFile, `[LLM-PARSE] JSON解析失败: ${parseError}`, traceId, taskId, workerId);
+        this.writeLog(logFile, `[LLM-PARSE] LLM原始输出: ${content.substring(0, 500)}`, traceId, taskId, workerId);
         throw new Error(`JSON解析失败: ${parseError}`);
       }
 
     } catch (error) {
-      this.writeLog(logFile, `[LLM-PARSE] LLM解析异常: ${error}`);
-      log({ prefix: 'WorkerManager', message: `LLM解析失败，降级到传统解析方法: ${error}`, level: 'error' });
+      this.writeLog(logFile, `[LLM-PARSE] LLM解析异常: ${error}`, traceId, taskId, workerId);
+      log({ logFile, prefix: 'WorkerManager', message: `LLM解析失败，降级到传统解析方法: ${error}`, level: 'error', traceId, taskId, workerId });
 
       // 降级到原来的解析方法
       return this.parseWorkerOutput(rawOutput, worker, traceId);
@@ -463,8 +469,7 @@ ${cleanedOutput}
           data: parsed.data,
           confidence: parsed.confidence || 0.8,
           source_agent: worker.type,
-          trace_id: traceId,
-          error: parsed.error
+          trace_id: traceId
         };
       }
     } catch (e) {
@@ -484,8 +489,8 @@ ${cleanedOutput}
   /**
    * 写入日志（静默模式：只写文件不输出终端）
    */
-  private writeLog(logFile: string, message: string): void {
-    log({ logFile, prefix: 'WorkerManager', message, silent: true });
+  private writeLog(logFile: string, message: string, traceId?: string, taskId?: string, workerId?: string): void {
+    log({ logFile, prefix: 'WorkerManager', message, silent: true, traceId, taskId, workerId });
   }
 
   /**

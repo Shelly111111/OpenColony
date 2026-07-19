@@ -23,7 +23,8 @@ import { WorkerManager } from "./worker-manager";
 import { ArbitrationEngine } from "./arbitration-engine";
 import { ClaudeLink } from "./claude-link";
 import { getLLMClient } from "./llm-client";
-import { log } from "./logger";
+import { log, setLogDb } from "./logger";
+import { MessageDB } from "./message-db";
 
 export class MasterScheduler {
   private config: SchedulerConfig;
@@ -31,6 +32,7 @@ export class MasterScheduler {
   private workerManager: WorkerManager;
   private arbitrationEngine: ArbitrationEngine;
   private tasks: Map<string, MainTask> = new Map();
+  private logDb: MessageDB;
 
   constructor(config: Partial<SchedulerConfig> = {}) {
     this.config = {
@@ -46,6 +48,10 @@ export class MasterScheduler {
     this.planExecutor = new PlanExecutor(this.config);
     this.workerManager = new WorkerManager(this.config);
     this.arbitrationEngine = new ArbitrationEngine(this.config);
+
+    // 初始化日志数据库并注入到 logger
+    this.logDb = new MessageDB();
+    setLogDb(this.logDb);
   }
 
   /**
@@ -85,9 +91,9 @@ export class MasterScheduler {
       const masterLogFile = path.join(logDir, `Master_${traceId}.log`);
       task.masterLogFile = masterLogFile;
 
-      log({ logFile: masterLogFile, prefix: 'Master', message: `已创建任务 ${task.id}，TraceID: ${traceId}` });
-      log({ logFile: masterLogFile, prefix: 'Master', message: `用户需求: ${userRequest}` });
-      log({ logFile: masterLogFile, prefix: 'Master', message: `日志目录: ${logDir}` });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `已创建任务 ${task.id}，TraceID: ${traceId}`, traceId, taskId: task.id });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `用户需求: ${userRequest}`, traceId, taskId: task.id });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `日志目录: ${logDir}`, traceId, taskId: task.id });
 
       // 2. 调用Plan模块拆分任务，构建DAG
       task.status = TaskStatus.RUNNING;
@@ -97,27 +103,26 @@ export class MasterScheduler {
       task.subTasks = new Map(planOutput.subTasks.map(st => [st.id, st]));
       task.dag = planOutput.dag;
 
-      log({ logFile: masterLogFile, prefix: 'Master', message: `任务拆分完成，共 ${planOutput.subTasks.length} 个子任务` });
-      log({ logFile: masterLogFile, prefix: 'Master', message: `预估执行时间: ${planOutput.estimatedDuration}秒` });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `任务拆分完成，共 ${planOutput.subTasks.length} 个子任务`, traceId, taskId: task.id });
 
       // 3. 执行任务DAG
       const executionResults = await this.planExecutor.executeDAG(task, this.workerManager);
 
       // 4. 校验所有Worker输出
-      log({ prefix: 'Master', message: `任务执行完成，开始校验输出` });
-      const validOutputs = this.validateOutputs(executionResults);
+      log({ logFile: masterLogFile, prefix: 'Master', message: `任务执行完成，开始校验输出`, traceId, taskId: task.id });
+      const validOutputs = this.validateOutputs(executionResults, masterLogFile, traceId, task.id);
 
       if (validOutputs.length === 0) {
         throw new Error("所有子任务执行失败，无有效输出");
       }
 
       // 5. 仲裁冲突，合并结果
-      log({ prefix: 'Master', message: `开始仲裁合并 ${validOutputs.length} 个有效输出` });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `开始仲裁合并 ${validOutputs.length} 个有效输出`, traceId, taskId: task.id });
       const arbitrationResult = await this.arbitrationEngine.arbitrate(validOutputs, task);
 
       if (!arbitrationResult.resolved) {
         if (arbitrationResult.requiresUserInput) {
-          log({ prefix: 'Master', message: `需要用户输入: ${arbitrationResult.userPrompt}` });
+          log({ logFile: masterLogFile, prefix: 'Master', message: `需要用户输入: ${arbitrationResult.userPrompt}`, traceId, taskId: task.id });
         }
         throw new Error(`仲裁失败: ${arbitrationResult.conflicts?.join(', ')}`);
       }
@@ -125,16 +130,16 @@ export class MasterScheduler {
       // 6. 如果启用评审，调用独立评审Agent二次校验
       let finalOutput = arbitrationResult.finalOutput;
       if (this.config.enableReview) {
-        log({ prefix: 'Master', message: `启动独立评审Agent校验结果` });
-        const reviewResult = await this.performReviewWithLLM(finalOutput, task);
+        log({ logFile: masterLogFile, prefix: 'Master', message: `启动独立评审Agent校验结果`, traceId, taskId: task.id });
+        const reviewResult = await this.performReviewWithLLM(finalOutput, task, masterLogFile);
 
         if (!reviewResult.passed) {
-          log({ prefix: 'Master', message: `评审未通过: ${reviewResult.feedback}`, level: 'warn' });
-          log({ prefix: 'Master', message: `将尝试根据评审意见改进...`, level: 'warn' });
+          log({ logFile: masterLogFile, prefix: 'Master', message: `评审未通过: ${reviewResult.feedback}`, level: 'warn', traceId, taskId: task.id });
+          log({ logFile: masterLogFile, prefix: 'Master', message: `将尝试根据评审意见改进...`, level: 'warn', traceId, taskId: task.id });
 
           // 可以在这里添加改进逻辑
         } else {
-          log({ prefix: 'Master', message: `评审通过` });
+          log({ logFile: masterLogFile, prefix: 'Master', message: `评审通过`, traceId, taskId: task.id });
         }
 
         // 将评审结果也附加到最终输出中
@@ -150,7 +155,7 @@ export class MasterScheduler {
       task.completedAt = new Date();
 
       const duration = (Date.now() - startTime) / 1000;
-      log({ prefix: 'Master', message: `任务 ${task.id} 执行完成，耗时 ${duration} 秒` });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `任务 ${task.id} 执行完成，耗时 ${duration} 秒`, traceId, taskId: task.id });
 
       return {
         success: true,
@@ -161,7 +166,8 @@ export class MasterScheduler {
 
     } catch (error) {
       const duration = (Date.now() - startTime) / 1000;
-      log({ prefix: 'Master', message: `任务执行失败: ${error}`, level: 'error' });
+      const task = this.tasks.get(traceId);
+      log({ logFile: task?.masterLogFile, prefix: 'Master', message: `任务执行失败: ${error}`, level: 'error', traceId, taskId: task?.id });
 
       return {
         success: false,
@@ -205,11 +211,11 @@ export class MasterScheduler {
   /**
    * 校验所有Worker输出
    */
-  private validateOutputs(outputs: WorkerOutput[]): WorkerOutput[] {
+  private validateOutputs(outputs: WorkerOutput[], masterLogFile?: string, traceId?: string, taskId?: string): WorkerOutput[] {
     return outputs.filter(output => {
       const result = WorkerOutputSchema.safeParse(output);
       if (!result.success) {
-        log({ prefix: 'Master', message: `输出校验失败: ${result.error.message}`, level: 'warn' });
+        log({ logFile: masterLogFile, prefix: 'Master', message: `输出校验失败: ${result.error.message}`, level: 'warn', traceId, taskId });
         return false;
       }
       return output.status !== "fail" || output.confidence > 0.5;
@@ -219,13 +225,13 @@ export class MasterScheduler {
   /**
    * 使用LLM执行独立评审
    */
-  private async performReviewWithLLM(output: any, task: MainTask): Promise<{
+  private async performReviewWithLLM(output: any, task: MainTask, masterLogFile?: string): Promise<{
     passed: boolean;
     feedback: string;
     issues?: string[];
     suggestions?: string[];
   }> {
-    log({ prefix: 'Master', message: `调用LLM进行评审...` });
+    log({ logFile: masterLogFile, prefix: 'Master', message: `调用LLM进行评审...`, traceId: task.traceId, taskId: task.id });
 
     const llm = getLLMClient();
 
@@ -276,15 +282,15 @@ ${outputStr}
     });
 
     if (!response.success || !response.data) {
-      log({ prefix: 'Master', message: `评审LLM调用失败，默认通过: ${response.error}`, level: 'warn' });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `评审LLM调用失败，默认通过: ${response.error}`, level: 'warn', traceId: task.traceId, taskId: task.id });
       return {
         passed: true,
         feedback: '评审过程出现问题，默认通过。错误: ' + response.error
       };
     }
 
-    log({ prefix: 'Master', message: `评审完成，结果: ${response.data.passed ? '通过' : '未通过'}, 评分: ${response.data.score || 'N/A'}` });
-    log({ prefix: 'Master', message: `评审反馈: ${response.data.feedback}` });
+    log({ logFile: masterLogFile, prefix: 'Master', message: `评审完成，结果: ${response.data.passed ? '通过' : '未通过'}, 评分: ${response.data.score || 'N/A'}`, traceId: task.traceId, taskId: task.id });
+    log({ logFile: masterLogFile, prefix: 'Master', message: `评审反馈: ${response.data.feedback}`, traceId: task.traceId, taskId: task.id });
 
     return response.data;
   }
@@ -297,5 +303,8 @@ ${outputStr}
     await this.workerManager.shutdown();
     ClaudeLink.getInstance().shutdown();
     log({ prefix: 'Master', message: `调度器已关闭` });
+    // 关闭日志数据库
+    setLogDb(null);
+    this.logDb.close();
   }
 }

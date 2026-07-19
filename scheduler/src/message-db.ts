@@ -48,6 +48,22 @@ export class MessageDB {
       CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);
       CREATE INDEX IF NOT EXISTS idx_messages_priority ON messages(priority);
       CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+
+      CREATE TABLE IF NOT EXISTS logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trace_id TEXT,
+        task_id TEXT,
+        worker_id TEXT,
+        prefix TEXT,
+        message TEXT NOT NULL,
+        level TEXT NOT NULL DEFAULT 'info',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_logs_trace_id ON logs(trace_id);
+      CREATE INDEX IF NOT EXISTS idx_logs_task_id ON logs(task_id);
+      CREATE INDEX IF NOT EXISTS idx_logs_worker_id ON logs(worker_id);
+      CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at);
     `);
   }
 
@@ -106,6 +122,49 @@ export class MessageDB {
 
     const stmt = this.db.prepare(`
       DELETE FROM messages 
+      WHERE created_at < ?
+    `);
+    stmt.run(cutoffDate.toISOString());
+  }
+
+  insertLog(options: {
+    traceId?: string;
+    taskId?: string;
+    workerId?: string;
+    prefix?: string;
+    message: string;
+    level: string;
+  }): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO logs (trace_id, task_id, worker_id, prefix, message, level, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+      options.traceId || null,
+      options.taskId || null,
+      options.workerId || null,
+      options.prefix || null,
+      options.message,
+      options.level,
+      new Date().toISOString()
+    );
+  }
+
+  getLogsByTraceId(traceId: string): any[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM logs
+      WHERE trace_id = ?
+      ORDER BY created_at ASC
+    `);
+    return stmt.all(traceId) as any[];
+  }
+
+  cleanupOldLogs(retentionDays: number = 7): void {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+
+    const stmt = this.db.prepare(`
+      DELETE FROM logs
       WHERE created_at < ?
     `);
     stmt.run(cutoffDate.toISOString());
