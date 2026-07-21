@@ -44,6 +44,7 @@ export class ClaudeUnifiedPtyManager {
   private backendType: string = "";
   private mode: ClaudeRunMode;
   private sdkClient: ClaudeSDKClient | null = null;
+  private workerId: string = 'unknown-worker';
 
   constructor(maxSessions: number, mode: ClaudeRunMode = 'pty') {
     this.maxSessions = maxSessions;
@@ -52,6 +53,16 @@ export class ClaudeUnifiedPtyManager {
 
     if (mode === 'sdk') {
       this.sdkClient = getSDKClient();
+    }
+  }
+
+  /**
+   * 设置 Worker ID（由 scheduler 的 worker-manager 传入真实 UUID）
+   */
+  setWorkerId(workerId: string): void {
+    this.workerId = workerId;
+    if (this.sdkClient) {
+      this.sdkClient.setWorkerId(workerId);
     }
   }
 
@@ -206,8 +217,7 @@ export class ClaudeUnifiedPtyManager {
       this.activeCount++;
 
       try {
-        const workerId = `worker-${sessionId}`;
-        this.sdkClient!.setWorkerId(workerId);
+        // workerId 已通过 setWorkerId 设置（使用真实UUID而非session编号）
         await this.sdkClient!.executeCommand(command, sessionId, session.logFile);
         session.status = "completed";
         this.activeCount--;

@@ -118,6 +118,34 @@ export class WorkerManager {
   }
 
   /**
+   * 按 ID 获取 Worker
+   */
+  getWorker(workerId: string): WorkerInstance | undefined {
+    return this.workers.get(workerId);
+  }
+
+  /**
+   * 获取所有执行中（busy）的 Worker
+   */
+  getActiveWorkers(): WorkerInstance[] {
+    return Array.from(this.workers.values()).filter(w => w.status === 'busy');
+  }
+
+  /**
+   * 按类型获取执行中的 Worker
+   */
+  getWorkersByType(workerType: string): WorkerInstance[] {
+    return Array.from(this.workers.values()).filter(w => w.type === workerType && w.status === 'busy');
+  }
+
+  /**
+   * 获取所有 Worker
+   */
+  getAllWorkers(): WorkerInstance[] {
+    return Array.from(this.workers.values());
+  }
+
+  /**
    * 使用 ClaudeUnifiedPtyManager 执行任务（支持 SDK 和 PTY 两种模式）
    * 参照 main.ts 的方案：每个任务创建独立的 ClaudeUnifiedPtyManager
    */
@@ -158,6 +186,9 @@ export class WorkerManager {
       log({ logFile, prefix: 'WorkerManager', message: `Worker ${worker.id} 初始化 ${mode.toUpperCase()} 管理器...`, traceId, taskId, workerId });
 
       await manager.initialize();
+
+      // 设置真实 Worker UUID（而非 session 编号），确保 ClaudeLink 收件箱匹配
+      manager.setWorkerId(worker.id);
 
       // 格式化命令以适应PTY输入（将多行转换为单行）
       const command = this.formatCommandForPty(subTask.command);

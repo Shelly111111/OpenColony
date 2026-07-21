@@ -185,10 +185,47 @@ function initSchedulerListeners() {
 
     document.getElementById('masterTabStatus').textContent = '● 已完成';
     document.getElementById('masterTabStatus').style.color = '#4ade80';
+    // 任务完成，清除当前 traceId
+    window.currentTraceId = null;
   });
 }
 
 // ==================== 提交任务 ====================
+
+/**
+ * 解析输入，判断是补充信息注入还是普通任务提交
+ *
+ * 规则：
+ * 1. @worker_type 内容 → 定向路由注入
+ * 2. @all 内容 → 全局广播注入
+ * 3. 任务执行中 + 无@前缀 → 智能路由注入（默认行为）
+ * 4. 无任务执行中 + 无@前缀 → 创建新任务
+ */
+function parseInput(text, isTaskRunning) {
+  // 匹配 @worker_type 或 @all 开头
+  const directedMatch = text.match(/^@(\w+)\s+(.+)$/s);
+  if (directedMatch) {
+    const target = directedMatch[1].toLowerCase();
+    const content = directedMatch[2].trim();
+    if (target === 'all' || target === 'broadcast') {
+      return { type: 'inject', route: 'broadcast', content };
+    }
+    return { type: 'inject', route: 'directed', targetWorkerType: target, content };
+  }
+  // 任务执行中，后续消息作为补充信息（智能路由）
+  if (isTaskRunning) {
+    return { type: 'inject', route: 'smart', content: text };
+  }
+  return { type: 'task' };
+}
+
+/**
+ * 检查当前是否有任务正在执行
+ */
+function isTaskRunning() {
+  const statusEl = document.getElementById('masterTabStatus');
+  return statusEl && statusEl.textContent && statusEl.textContent.includes('执行中');
+}
 
 async function sendMessage() {
   const input = document.getElementById('chatInput');
@@ -196,6 +233,7 @@ async function sendMessage() {
   if (!text) return;
 
   const mode = document.getElementById('runModeSelect').value;
+  const parsed = parseInput(text, isTaskRunning());
 
   if (!chatMessages[currentChatTab]) chatMessages[currentChatTab] = [];
   const userMsg = { type: 'user', content: text };
@@ -204,10 +242,19 @@ async function sendMessage() {
   appendMessageDom(userMsg);
   updateMsgCount();
 
+  // 补充信息注入
+  if (parsed.type === 'inject') {
+    await sendSupplementaryInfo(parsed, mode);
+    return;
+  }
+
+  // 普通任务提交
   try {
     const result = await invoke('submit_task', { request: { task: text, mode } });
 
     if (result.success) {
+      // 存储当前 traceId，供补充信息注入使用
+      window.currentTraceId = result.trace_id || null;
       const msg = {
         type: 'master',
         content: `✅ ${result.message}\n\n📝 Trace ID: ${result.trace_id || 'N/A'}\n${result.data || ''}`,
@@ -235,6 +282,114 @@ async function sendMessage() {
   }
 
   updateMsgCount();
+}
+
+/**
+ * 发送补充信息注入
+ */
+async function sendSupplementaryInfo(parsed, mode) {
+  // 获取当前运行中任务的traceId
+  let traceId = null;
+
+  // 优先从全局变量获取（submit_task 时存储）
+  if (window.currentTraceId) {
+    traceId = window.currentTraceId;
+  } else {
+    // 回退：从系统状态获取
+    try {
+      const status = await invoke('get_system_status', {});
+      traceId = status.current_trace_id;
+    } catch (e) {
+      // 忽略
+    }
+  }
+
+  if (!traceId) {
+    const msg = {
+      type: 'master',
+      content: '⚠️ 当前没有执行中的任务，无法注入补充信息。请先提交任务。',
+      closed: true
+    };
+    chatMessages[currentChatTab].push(msg);
+    appendMessageDom(msg);
+    updateMsgCount();
+    return;
+  }
+
+  const request = {
+    trace_id: traceId,
+    content: parsed.content,
+    target_worker_type: parsed.targetWorkerType || null,
+    route: parsed.route || null,
+    urgent: false,
+  };
+
+  try {
+    const result = await invoke('inject_info', { request });
+
+    if (result.success && result.data) {
+      const injectResult = JSON.parse(result.data);
+      const cardHtml = buildInjectionCard(injectResult, parsed);
+      const msg = {
+        type: 'master',
+        prefix: 'Master',
+        content: cardHtml,
+        closed: true,
+        isHtml: true,
+      };
+      chatMessages[currentChatTab].push(msg);
+      appendMessageDom(msg);
+    } else {
+      const msg = {
+        type: 'master',
+        content: `❌ 补充信息注入失败: ${result.message}`,
+        closed: true
+      };
+      chatMessages[currentChatTab].push(msg);
+      appendMessageDom(msg);
+    }
+  } catch (e) {
+    const msg = {
+      type: 'master',
+      content: `❌ 注入调用失败: ${e}`,
+      closed: true
+    };
+    chatMessages[currentChatTab].push(msg);
+    appendMessageDom(msg);
+  }
+
+  updateMsgCount();
+}
+
+/**
+ * 构建路由详情卡片
+ */
+function buildInjectionCard(result, parsed) {
+  const statusIcon = result.statusCode === 6001 ? '✅' : result.statusCode === 6002 ? '❓' : '❌';
+  const statusText = result.statusCode === 6001 ? '已送达'
+    : result.statusCode === 6002 ? '需澄清目标'
+    : '无法送达';
+
+  const targetWorkers = (result.routeDetail?.targetWorkerIds || []).join(', ') || '无';
+  const reason = result.routeDetail?.reason || '';
+  const confidence = result.routeDetail?.confidence != null
+    ? `${(result.routeDetail.confidence * 100).toFixed(0)}%`
+    : '';
+  const keywordMatches = (result.routeDetail?.keywordMatches || []).join(', ');
+
+  let candidateHtml = '';
+  if (result.candidates && result.candidates.length > 0) {
+    const candidates = result.candidates.map(c => `• ${c.type} (${c.id.slice(0, 8)}...) - ${c.status}`).join('\n');
+    candidateHtml = `\n└─ 候选Worker:\n${candidates}`;
+  }
+
+  return `📤 补充信息路由详情
+├─ 原始输入: "${parsed.content}"
+├─ 路由模式: ${result.route}
+├─ 目标Worker: ${targetWorkers}
+├─ 决策依据: ${reason}
+${confidence ? `├─ 置信度: ${confidence}\n` : ''}${keywordMatches ? `├─ 关键词匹配: ${keywordMatches}\n` : ''}├─ 注入状态: ${statusIcon} ${statusText} (状态码: ${result.statusCode})
+${candidateHtml}`;
 }
 
 function handleChatInputKey(event) {

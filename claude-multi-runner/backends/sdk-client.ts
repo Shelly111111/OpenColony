@@ -169,30 +169,84 @@ export class ClaudeSDKClient {
 
       const collaborationServer = this.createCollaborationMcpServer();
 
+      const allowedTools = [
+        "Read", "Write", "Edit", "Bash", "Glob", "Grep",
+        "mcp__worker-collaboration__send_to",
+        "mcp__worker-collaboration__send_to_high",
+        "mcp__worker-collaboration__broadcast",
+        "mcp__worker-collaboration__ask_help",
+        "mcp__worker-collaboration__check_inbox"
+      ];
+
+      const self = this;
+
+      // ---- 轮询 + Stop hook 退出标记 ----
+      // generator 轮询收件箱注入补充信息
+      // Stop hook 在 Agent 退出时设置标记，让 generator 也退出，防止进程挂起
+      let shouldStop = false;
+      let wakeResolver: (() => void) | null = null;
+
+      /** 等待唤醒或超时，timer.unref() 不阻止进程退出 */
+      function waitForWakeOrTimeout(ms: number): Promise<void> {
+        return new Promise(resolve => {
+          const timer = setTimeout(resolve, ms);
+          timer.unref();
+          wakeResolver = () => { clearTimeout(timer); resolve(); };
+        });
+      }
+
+      /** 检查收件箱并格式化补充信息 */
+      function checkInboxAndFormat(): string | null {
+        const msgs = self.claudeLink.checkInbox(self.workerId);
+        if (msgs.length === 0) return null;
+
+        self.claudeLink.markAsReceived(msgs.map(m => m.id));
+        log({ logFile, message: `[协作] 检查到 ${msgs.length} 条补充信息`, sessionId });
+
+        return msgs.map(msg => {
+          const ctx = msg.context as any;
+          const isSupplementary = ctx?.type === 'supplementary_info';
+          const prefix = isSupplementary ? '📤 [补充信息]' : '📨 [消息]';
+          const fromLabel = msg.fromWorkerId === 'master' ? 'Master' : msg.fromWorkerId;
+          return `${prefix} 来自 ${fromLabel}: ${msg.content}`;
+        }).join('\n\n');
+      }
+
+      /** Generator: yield 初始命令，然后轮询收件箱注入补充信息 */
       async function* generateMessages() {
+        // 1. yield 初始命令
         yield {
           type: "user" as const,
-          message: {
-            role: "user" as const,
-            content: command
-          },
+          message: { role: "user" as const, content: command },
           parent_tool_use_id: null as null,
           session_id: `session-${sessionId}`
         };
+
+        // 2. 轮询收件箱，有补充信息则 yield 为新的 user message
+        while (!shouldStop) {
+          await waitForWakeOrTimeout(2000);
+          if (shouldStop) break;
+
+          const inboxInfo = checkInboxAndFormat();
+          if (inboxInfo) {
+            yield {
+              type: "user" as const,
+              message: {
+                role: "user" as const,
+                content: `## 📥 收到新的补充信息\n\n${inboxInfo}\n\n---\n请根据以上补充信息调整你的执行策略。如果补充信息要求停止，请立即停止当前操作。`
+              },
+              parent_tool_use_id: null as null,
+              session_id: `session-${sessionId}`
+            };
+          }
+        }
       }
 
       const queryStream = query({
         prompt: generateMessages(),
         options: {
           cwd: process.cwd(),
-          allowedTools: [
-            "Read", "Write", "Edit", "Bash", "Glob", "Grep",
-            "mcp__worker-collaboration__send_to",
-            "mcp__worker-collaboration__send_to_high",
-            "mcp__worker-collaboration__broadcast",
-            "mcp__worker-collaboration__ask_help",
-            "mcp__worker-collaboration__check_inbox"
-          ],
+          allowedTools,
           mcpServers: {
             "worker-collaboration": collaborationServer
           },
@@ -201,52 +255,56 @@ export class ClaudeSDKClient {
           model: this.model,
           maxTurns: 50,
           includePartialMessages: true,
-        }
+          hooks: {
+            // Stop hook: Agent 退出时设置跳出标记，让 generator 轮询也退出
+            Stop: [{
+              hooks: [async (_input: any) => {
+                shouldStop = true;
+                if (wakeResolver) { wakeResolver(); wakeResolver = null; }
+                return { continue: true };
+              }]
+            }]
+          }
+        } as any,
       });
 
-      const messagesPromise = (async () => {
-        for await (const message of queryStream) {
-          const msgType = (message as any).type || 'unknown';
+      for await (const message of queryStream) {
+        const msgType = (message as any).type || 'unknown';
 
-          if (msgType === 'result') {
-            const resultMsg = message as any;
-
-            if (resultMsg.subtype === 'success' && resultMsg.result) {
-              fullResponse = resultMsg.result;
-            } else {
-              const errorReason = resultMsg.subtype || 'unknown';
-              log({ logFile, message: `执行未完成: ${errorReason}`, silent: false });
-
-              if (assistantMessages.length > 0) {
-                fullResponse = assistantMessages.join('');
-              }
+        if (msgType === 'result') {
+          const resultMsg = message as any;
+          if (resultMsg.subtype === 'success' && resultMsg.result) {
+            fullResponse = resultMsg.result;
+          } else {
+            const errorReason = resultMsg.subtype || 'unknown';
+            log({ logFile, message: `执行未完成: ${errorReason}`, silent: false });
+            if (assistantMessages.length > 0) {
+              fullResponse = assistantMessages.join('');
             }
-          } else if (msgType === 'assistant') {
-            const assistantMsg = message as any;
-            if (assistantMsg.message && assistantMsg.message.content) {
-              const content = assistantMsg.message.content;
+          }
+        } else if (msgType === 'assistant') {
+          const assistantMsg = message as any;
+          if (assistantMsg.message && assistantMsg.message.content) {
+            const content = assistantMsg.message.content;
 
-              const textContent = content
-                .filter((block: any) => block.type === 'text')
-                .map((block: any) => block.text)
-                .join('');
-              if (textContent) {
-                assistantMessages.push(textContent);
-                log({ logFile, message: `[Assistant] ${textContent}`, sessionId, silent: false });
-              }
+            const textContent = content
+              .filter((block: any) => block.type === 'text')
+              .map((block: any) => block.text)
+              .join('');
+            if (textContent) {
+              assistantMessages.push(textContent);
+              log({ logFile, message: `[Assistant] ${textContent}`, sessionId, silent: false });
+            }
 
-              const toolUses = content.filter((block: any) => block.type === 'tool_use');
-              for (const toolUse of toolUses) {
-                const toolInfo = `[tool_use] 使用工具:${toolUse.id}，${toolUse.name}:${JSON.stringify(toolUse.input)}`;
-                log({ logFile, message: toolInfo, sessionId, silent: false });
-              }
+            const toolUses = content.filter((block: any) => block.type === 'tool_use');
+            for (const toolUse of toolUses) {
+              const toolInfo = `[tool_use] 使用工具:${toolUse.id}，${toolUse.name}:${JSON.stringify(toolUse.input)}`;
+              log({ logFile, message: toolInfo, sessionId, silent: false });
             }
           }
         }
-        log({ logFile, message: '', silent: true });
-      })();
-
-      await messagesPromise;
+      }
+      log({ logFile, message: '', silent: true });
 
       if (fullResponse) {
         log({ logFile, message: '执行完成', sessionId, silent: false });

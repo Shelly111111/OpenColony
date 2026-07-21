@@ -16,6 +16,8 @@ fn main() {
     let state = AppState {
         running_tasks: Mutex::new(HashMap::new()),
         session_id: Mutex::new(format!("#{}", chrono::Local::now().format("%H%M%S"))),
+        scheduler_stdin: tokio::sync::Mutex::new(None),
+        pending_injects: Mutex::new(HashMap::new()),
     };
 
     tauri::Builder::default()
@@ -37,6 +39,7 @@ fn main() {
             commands::get_worker_logs_root,
             commands::get_log_trace_list,
             commands::get_logs_by_trace_id,
+            commands::inject_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

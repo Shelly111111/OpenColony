@@ -251,3 +251,68 @@ export interface ClaudeLinkConfig {
   messageRetentionDays?: number;
   sendRateLimitMs?: number;
 }
+
+// ==================== 动态信息注入相关类型 ====================
+
+/**
+ * 补充信息路由模式
+ */
+export enum InjectionRoute {
+  DIRECTED = "directed",     // 定向路由：用户明确指定Worker
+  SMART = "smart",           // 智能路由：Master自动判断
+  BROADCAST = "broadcast"    // 全局广播：所有Worker
+}
+
+/**
+ * 信息注入时机
+ */
+export enum InjectionTiming {
+  IMMEDIATE = "immediate",       // 立即注入（默认）
+  INTERRUPT = "interrupt",       // 强制中断注入
+  WAIT = "wait"                  // 等待注入
+}
+
+/**
+ * 补充信息注入状态（对应状态码 6001/6002/6003）
+ */
+export enum InjectionStatus {
+  DELIVERED = "delivered",                // 6001: 已送达
+  NEEDS_CLARIFICATION = "needs_clarification",  // 6002: 需用户澄清目标
+  UNDELIVERABLE = "undeliverable"         // 6003: 无法送达
+}
+
+/**
+ * 补充信息注入请求
+ */
+export interface InjectionRequest {
+  traceId: string;
+  content: string;
+  route?: InjectionRoute;
+  targetWorkerId?: string;   // 定向路由时指定的Worker ID
+  targetWorkerType?: string; // 定向路由时指定的Worker类型（与targetWorkerId二选一）
+  timing?: InjectionTiming;
+  urgent?: boolean;          // 紧急标记，触发强制中断
+}
+
+/**
+ * 路由决策详情
+ */
+export interface RouteDetail {
+  targetWorkerIds: string[];
+  reason: string;            // 路由决策依据
+  confidence?: number;       // 置信度（智能路由时由LLM给出）
+  keywordMatches?: string[]; // 关键词匹配项
+}
+
+/**
+ * 补充信息注入结果
+ */
+export interface InjectionResult {
+  status: InjectionStatus;
+  statusCode: number;        // 6001/6002/6003
+  route: InjectionRoute;
+  routeDetail: RouteDetail;
+  messageIds: string[];      // 写入ClaudeLink的消息ID
+  candidates?: WorkerInstance[]; // 需澄清时返回候选Worker
+  error?: string;
+}

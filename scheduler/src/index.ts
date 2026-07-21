@@ -3,9 +3,10 @@
  */
 
 import { MasterScheduler } from "./master";
-import { TaskPriority, ArbitrationMode } from "./types";
+import { TaskPriority, ArbitrationMode, InjectionRoute, InjectionTiming, InjectionRequest } from "./types";
 import { log } from "./logger";
 import { MessageDB } from "./message-db";
+import * as readline from "readline";
 
 // 导出所有公共类型和类
 export * from "./types";
@@ -77,6 +78,74 @@ async function main() {
 }
 
 /**
+ * 启动 stdin 监听器，接收 Tauri 发来的补充信息注入命令
+ *
+ * 通信协议：
+ * - Tauri 写入: __INJECT__:<json>\n
+ * - scheduler 输出: __INJECT_RESULT__:<json>\n
+ *
+ * json 字段: request_id, trace_id, content, target_worker_type, route, urgent
+ */
+function startStdinListener(scheduler: MasterScheduler): { stop: () => void } {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    terminal: false,
+  });
+
+  rl.on('line', async (line: string) => {
+    const prefix = '__INJECT__:';
+    if (!line.startsWith(prefix)) return;
+
+    const jsonStr = line.slice(prefix.length);
+    let cmd: any;
+    try {
+      cmd = JSON.parse(jsonStr);
+    } catch {
+      log({ message: `stdin 注入命令 JSON 解析失败: ${jsonStr}`, level: 'error' });
+      return;
+    }
+
+    log({ message: `收到补充信息注入请求: request_id=${cmd.request_id}, content="${(cmd.content || '').slice(0, 80)}..."` });
+
+    try {
+      // 构造注入请求
+      const request: InjectionRequest = {
+        traceId: cmd.trace_id || '',
+        content: cmd.content || '',
+        targetWorkerType: cmd.target_worker_type || undefined,
+        route: cmd.route as InjectionRoute | undefined,
+        urgent: cmd.urgent || false,
+      };
+
+      const result = await scheduler.injectSupplementaryInfo(request);
+
+      // 输出结果到 stdout，供 Tauri 解析
+      process.stdout.write(`__INJECT_RESULT__:${JSON.stringify({
+        request_id: cmd.request_id,
+        success: true,
+        status: result.status,
+        statusCode: result.statusCode,
+        route: result.route,
+        routeDetail: result.routeDetail,
+        messageIds: result.messageIds,
+        candidates: result.candidates?.map(w => ({ id: w.id, type: w.type, status: w.status })),
+        error: result.error,
+      })}\n`);
+    } catch (error) {
+      process.stdout.write(`__INJECT_RESULT__:${JSON.stringify({
+        request_id: cmd.request_id,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      })}\n`);
+    }
+  });
+
+  return {
+    stop: () => rl.close(),
+  };
+}
+
+/**
  * 默认模式 - 使用默认配置启动调度中心
  * @param mode 运行模式：sdk 或 pty
  * @param userRequest 可选的任务请求，如果提供则执行该任务
@@ -121,10 +190,16 @@ async function runDefaultMode(mode: 'sdk' | 'pty' = 'sdk', userRequest?: string)
       log({ message: `需求: ${userRequest}` });
       log({ message: `==================` });
 
+      // 启动 stdin 监听器，接收 Tauri 的补充信息注入命令
+      const stdinListener = startStdinListener(scheduler);
+
       const result = await scheduler.submitRequest(userRequest, {
         name: "默认模式任务",
         priority: TaskPriority.P1
       });
+
+      // 任务完成后停止 stdin 监听
+      stdinListener.stop();
 
       log({ message: `\n=== 任务执行完成 ===` });
       log({ message: `状态: ${result.success ? "成功" : "失败"}` });

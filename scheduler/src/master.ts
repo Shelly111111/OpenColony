@@ -16,7 +16,15 @@ import {
   WorkerOutput,
   SchedulerConfig,
   WorkerOutputSchema,
-  ArbitrationMode
+  ArbitrationMode,
+  InjectionRequest,
+  InjectionResult,
+  InjectionRoute,
+  InjectionTiming,
+  InjectionStatus,
+  RouteDetail,
+  MessagePriority,
+  WorkerInstance
 } from "./types";
 import { PlanExecutor } from "./plan-executor";
 import { WorkerManager } from "./worker-manager";
@@ -293,6 +301,360 @@ ${outputStr}
     log({ logFile: masterLogFile, prefix: 'Master', message: `评审反馈: ${response.data.feedback}`, traceId: task.traceId, taskId: task.id });
 
     return response.data;
+  }
+
+  /**
+   * 接收用户补充信息，路由至目标Worker（V1.5核心功能）
+   *
+   * 支持三种路由模式：
+   * - 定向路由：用户明确指定Worker（通过targetWorkerId或targetWorkerType）
+   * - 智能路由：Master通过LLM分析信息内容，自动路由到最相关Worker
+   * - 全局广播：信息对所有Worker有效
+   *
+   * 支持三种注入时机：
+   * - 立即注入：Worker下轮ReAct循环检查inbox时获取（默认）
+   * - 强制中断：标记为HIGH优先级，Worker优先处理
+   * - 等待注入：当前操作完成后注入
+   *
+   * 返回状态码：
+   * - 6001: 补充信息已路由送达
+   * - 6002: 补充信息需用户澄清目标
+   * - 6003: 补充信息无法送达
+   */
+  async injectSupplementaryInfo(request: InjectionRequest): Promise<InjectionResult> {
+    const claudeLink = ClaudeLink.getInstance();
+    const timing = request.timing || (request.urgent ? InjectionTiming.INTERRUPT : InjectionTiming.IMMEDIATE);
+    const fromWorkerId = 'master';
+
+    log({ prefix: 'Master', message: `收到补充信息注入请求: route=${request.route || 'auto'}, timing=${timing}, content="${request.content.slice(0, 80)}..."` });
+
+    // 1. 确定路由模式
+    let route: InjectionRoute;
+    if (request.route) {
+      route = request.route;
+    } else if (request.targetWorkerId || request.targetWorkerType) {
+      route = InjectionRoute.DIRECTED;
+    } else {
+      route = InjectionRoute.SMART;
+    }
+
+    // 2. 根据路由模式分发
+    switch (route) {
+      case InjectionRoute.DIRECTED:
+        return await this.routeDirected(request, timing, fromWorkerId);
+      case InjectionRoute.BROADCAST:
+        return await this.routeBroadcast(request, timing, fromWorkerId);
+      case InjectionRoute.SMART:
+      default:
+        return await this.routeSmart(request, timing, fromWorkerId);
+    }
+  }
+
+  /**
+   * 定向路由：用户明确指定Worker
+   */
+  private async routeDirected(
+    request: InjectionRequest,
+    timing: InjectionTiming,
+    fromWorkerId: string
+  ): Promise<InjectionResult> {
+    const claudeLink = ClaudeLink.getInstance();
+    let targetWorkers: WorkerInstance[] = [];
+
+    if (request.targetWorkerId) {
+      // 按 Worker ID 从 workerManager 查询
+      const worker = this.workerManager.getWorker(request.targetWorkerId);
+      if (worker) targetWorkers.push(worker);
+    } else if (request.targetWorkerType) {
+      // 按 Worker 类型查询
+      targetWorkers = this.workerManager.getWorkersByType(request.targetWorkerType);
+    }
+
+    if (targetWorkers.length === 0) {
+      // 找不到目标Worker，返回需澄清
+      const candidates = this.workerManager.getActiveWorkers();
+      return {
+        status: InjectionStatus.NEEDS_CLARIFICATION,
+        statusCode: 6002,
+        route: InjectionRoute.DIRECTED,
+        routeDetail: {
+          targetWorkerIds: [],
+          reason: `未找到目标Worker: ${request.targetWorkerId || request.targetWorkerType}`,
+        },
+        messageIds: [],
+        candidates,
+      };
+    }
+
+    // 检查Worker是否已完成
+    const activeWorkers = targetWorkers.filter(w => w.status === 'busy');
+    if (activeWorkers.length === 0) {
+      return {
+        status: InjectionStatus.UNDELIVERABLE,
+        statusCode: 6003,
+        route: InjectionRoute.DIRECTED,
+        routeDetail: {
+          targetWorkerIds: targetWorkers.map(w => w.id),
+          reason: '目标Worker已完成当前任务',
+        },
+        messageIds: [],
+        error: '该Worker已完成，是否重新执行？',
+      };
+    }
+
+    const priority = timing === InjectionTiming.INTERRUPT ? MessagePriority.HIGH : MessagePriority.NORMAL;
+    const messageIds: string[] = [];
+    for (const worker of activeWorkers) {
+      const message = await claudeLink.sendMessage(fromWorkerId, worker.id, request.content, priority, {
+        type: 'supplementary_info',
+        traceId: request.traceId,
+        timing,
+        urgent: request.urgent || false,
+      });
+      messageIds.push(message.id);
+    }
+
+    log({ prefix: 'Master', message: `定向路由完成: 送达 ${activeWorkers.length} 个Worker, 消息ID: ${messageIds.join(', ')}` });
+
+    return {
+      status: InjectionStatus.DELIVERED,
+      statusCode: 6001,
+      route: InjectionRoute.DIRECTED,
+      routeDetail: {
+        targetWorkerIds: activeWorkers.map(w => w.id),
+        reason: `用户定向指定: ${request.targetWorkerId || request.targetWorkerType}`,
+      },
+      messageIds,
+    };
+  }
+
+  /**
+   * 全局广播：信息对所有Worker有效
+   */
+  private async routeBroadcast(
+    request: InjectionRequest,
+    timing: InjectionTiming,
+    fromWorkerId: string
+  ): Promise<InjectionResult> {
+    const claudeLink = ClaudeLink.getInstance();
+    // 从 workerManager 获取所有活跃Worker
+    const workers = this.workerManager.getActiveWorkers();
+
+    if (workers.length === 0) {
+      return {
+        status: InjectionStatus.NEEDS_CLARIFICATION,
+        statusCode: 6002,
+        route: InjectionRoute.BROADCAST,
+        routeDetail: {
+          targetWorkerIds: [],
+          reason: '当前没有执行中的Worker',
+        },
+        messageIds: [],
+        candidates: [],
+      };
+    }
+
+    const priority = timing === InjectionTiming.INTERRUPT ? MessagePriority.HIGH : MessagePriority.NORMAL;
+    const messageIds: string[] = [];
+    for (const worker of workers) {
+      const message = await claudeLink.sendMessage(fromWorkerId, worker.id, request.content, priority, {
+        type: 'supplementary_info',
+        traceId: request.traceId,
+        timing,
+        urgent: request.urgent || false,
+      });
+      messageIds.push(message.id);
+    }
+
+    log({ prefix: 'Master', message: `全局广播完成: 送达 ${workers.length} 个Worker` });
+
+    return {
+      status: InjectionStatus.DELIVERED,
+      statusCode: 6001,
+      route: InjectionRoute.BROADCAST,
+      routeDetail: {
+        targetWorkerIds: workers.map(w => w.id),
+        reason: '全局广播：信息对所有Worker有效',
+      },
+      messageIds,
+    };
+  }
+
+  /**
+   * 智能路由：Master通过LLM分析信息内容，自动路由到最相关Worker
+   */
+  private async routeSmart(
+    request: InjectionRequest,
+    timing: InjectionTiming,
+    fromWorkerId: string
+  ): Promise<InjectionResult> {
+    const claudeLink = ClaudeLink.getInstance();
+    // 从 workerManager 获取所有活跃Worker
+    const workers = this.workerManager.getActiveWorkers();
+
+    if (workers.length === 0) {
+      return {
+        status: InjectionStatus.NEEDS_CLARIFICATION,
+        statusCode: 6002,
+        route: InjectionRoute.SMART,
+        routeDetail: {
+          targetWorkerIds: [],
+          reason: '当前没有执行中的Worker',
+        },
+        messageIds: [],
+        candidates: [],
+      };
+    }
+
+    // 如果只有一个活跃Worker，直接路由
+    if (workers.length === 1) {
+      const worker = workers[0];
+      const priority = timing === InjectionTiming.INTERRUPT ? MessagePriority.HIGH : MessagePriority.NORMAL;
+      const message = await claudeLink.sendMessage(fromWorkerId, worker.id, request.content, priority, {
+        type: 'supplementary_info',
+        traceId: request.traceId,
+        timing,
+        urgent: request.urgent || false,
+      });
+
+      return {
+        status: InjectionStatus.DELIVERED,
+        statusCode: 6001,
+        route: InjectionRoute.SMART,
+        routeDetail: {
+          targetWorkerIds: [worker.id],
+          reason: `唯一活跃Worker: ${worker.type}`,
+          confidence: 1.0,
+        },
+        messageIds: [message.id],
+      };
+    }
+
+    // 多个Worker时，使用LLM智能路由
+    const routeDecision = await this.smartRouteWithLLM(request.content, workers);
+
+    if (!routeDecision.targetWorkerId) {
+      // LLM无法确定目标，返回需澄清
+      return {
+        status: InjectionStatus.NEEDS_CLARIFICATION,
+        statusCode: 6002,
+        route: InjectionRoute.SMART,
+        routeDetail: {
+          targetWorkerIds: [],
+          reason: routeDecision.reason,
+          confidence: routeDecision.confidence,
+          keywordMatches: routeDecision.keywordMatches,
+        },
+        messageIds: [],
+        candidates: workers,
+      };
+    }
+
+    const priority = timing === InjectionTiming.INTERRUPT ? MessagePriority.HIGH : MessagePriority.NORMAL;
+    const message = await claudeLink.sendMessage(fromWorkerId, routeDecision.targetWorkerId, request.content, priority, {
+      type: 'supplementary_info',
+      traceId: request.traceId,
+      timing,
+      urgent: request.urgent || false,
+    });
+
+    log({ prefix: 'Master', message: `智能路由完成: 目标=${routeDecision.targetWorkerId}, 置信度=${routeDecision.confidence}, 依据=${routeDecision.reason}` });
+
+    return {
+      status: InjectionStatus.DELIVERED,
+      statusCode: 6001,
+      route: InjectionRoute.SMART,
+      routeDetail: {
+        targetWorkerIds: [routeDecision.targetWorkerId],
+        reason: routeDecision.reason,
+        confidence: routeDecision.confidence,
+        keywordMatches: routeDecision.keywordMatches,
+      },
+      messageIds: [message.id],
+    };
+  }
+
+  /**
+   * 使用LLM进行智能路由决策
+   */
+  private async smartRouteWithLLM(
+    content: string,
+    workers: WorkerInstance[]
+  ): Promise<{ targetWorkerId: string | null; reason: string; confidence: number; keywordMatches?: string[] }> {
+    const llm = getLLMClient();
+
+    const workerList = workers.map((w, i) => ({
+      index: i,
+      id: w.id,
+      type: w.type,
+      currentTaskId: w.currentTaskId || 'unknown',
+    }));
+
+    const systemPrompt = `你是Master调度器的智能路由助手。用户在任务执行中提交了补充信息，你需要判断这条信息应该路由给哪个Worker。
+
+可用的Worker列表：
+${JSON.stringify(workerList, null, 2)}
+
+Worker类型说明：
+- code_agent: 代码编写、重构、修复
+- data_agent: 数据处理、数据库设计、数据分析
+- viz_agent: 可视化、图表生成
+- review_agent: 代码审查、质量检查
+- general_agent: 通用任务、文档编写
+
+请根据补充信息内容和Worker类型/任务，选择最相关的Worker。
+
+返回JSON格式：
+{
+  "target_index": 0,  // Worker在列表中的索引，-1表示无法确定
+  "confidence": 0.92,  // 0-1之间的置信度
+  "reason": "决策依据",
+  "keyword_matches": ["关键词1", "关键词2"]
+}`;
+
+    const userPrompt = `补充信息内容: "${content}"\n\n请判断应该路由给哪个Worker。`;
+
+    try {
+      const response = await llm.askForJSON<{
+        target_index: number;
+        confidence: number;
+        reason: string;
+        keyword_matches?: string[];
+      }>(userPrompt, { systemPrompt, temperature: 0.3 });
+
+      if (!response.success || !response.data) {
+        log({ prefix: 'Master', message: `智能路由LLM调用失败: ${response.error}, 回退到首个Worker`, level: 'warn' });
+        return {
+          targetWorkerId: workers[0].id,
+          reason: 'LLM调用失败，回退到首个活跃Worker',
+          confidence: 0.5,
+        };
+      }
+
+      const targetIndex = response.data.target_index;
+      if (targetIndex < 0 || targetIndex >= workers.length) {
+        return {
+          targetWorkerId: null,
+          reason: response.data.reason || 'LLM无法确定目标Worker',
+          confidence: response.data.confidence || 0,
+          keywordMatches: response.data.keyword_matches,
+        };
+      }
+
+      return {
+        targetWorkerId: workers[targetIndex].id,
+        reason: response.data.reason,
+        confidence: response.data.confidence,
+        keywordMatches: response.data.keyword_matches,
+      };
+    } catch (error) {
+      log({ prefix: 'Master', message: `智能路由异常: ${error}, 回退到首个Worker`, level: 'warn' });
+      return {
+        targetWorkerId: workers[0].id,
+        reason: '路由异常，回退到首个活跃Worker',
+        confidence: 0.5,
+      };
+    }
   }
 
   /**

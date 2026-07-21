@@ -62,7 +62,7 @@ pub async fn submit_task(
         .env("LOG_FORMAT", "json")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .stdin(Stdio::null());
+        .stdin(Stdio::piped());
 
     #[cfg(windows)]
     {
@@ -73,6 +73,13 @@ pub async fn submit_task(
     let mut child = cmd.spawn().map_err(|e| format!("启动 scheduler 失败: {}", e))?;
     let pid = child.id().unwrap_or(0);
     let trace_id = format!("task_{}", chrono::Local::now().format("%Y%m%d%H%M%S"));
+
+    // 取出 stdin 并存入 AppState，供 inject_info 命令使用
+    let child_stdin = child.stdin.take();
+    {
+        let mut stdin_lock = state.scheduler_stdin.lock().await;
+        *stdin_lock = child_stdin;
+    }
 
     {
         let mut tasks = state.running_tasks.lock().unwrap();
@@ -112,6 +119,15 @@ pub async fn submit_task(
                         "message": message,
                         "level": level,
                     }));
+                } else if let Some(rest) = line.strip_prefix("__INJECT_RESULT__:") {
+                    // 补充信息注入结果：解析 JSON，按 request_id 匹配 pending channel
+                    let parsed: serde_json::Value = serde_json::from_str(rest).unwrap_or_default();
+                    let req_id = parsed.get("request_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let app_state: State<AppState> = app_handle.state();
+                    let mut pending = app_state.pending_injects.lock().unwrap();
+                    if let Some(tx) = pending.remove(&req_id) {
+                        let _ = tx.send(parsed);
+                    }
                 } else {
                     // 普通 stdout 行（非结构化日志）
                     let _ = app_handle.emit_all("scheduler-output", serde_json::json!({
@@ -150,8 +166,15 @@ pub async fn submit_task(
 
         {
             let app_state: State<AppState> = app_handle.state();
-            let mut tasks = app_state.running_tasks.lock().unwrap();
-            tasks.remove(&trace_id_clone);
+            {
+                let mut tasks = app_state.running_tasks.lock().unwrap();
+                tasks.remove(&trace_id_clone);
+            }
+            // 清理 stdin 和未响应的 inject 请求
+            let mut stdin_lock = app_state.scheduler_stdin.lock().await;
+            *stdin_lock = None;
+            let mut pending = app_state.pending_injects.lock().unwrap();
+            pending.clear();
         }
     });
 
@@ -631,6 +654,79 @@ pub async fn test_claude_connection() -> TaskResult {
 #[tauri::command]
 pub fn get_worker_logs_root() -> String {
     paths::worker_logs_root().display().to_string()
+}
+
+// ==================== 补充信息注入 ====================
+
+#[tauri::command]
+pub async fn inject_info(
+    request: InjectInfoRequest,
+    state: State<'_, AppState>,
+) -> Result<TaskResult, String> {
+    use tokio::io::AsyncWriteExt;
+    use tokio::sync::oneshot;
+    use uuid::Uuid;
+
+    // 生成唯一 request_id，用于匹配响应
+    let request_id = Uuid::new_v4().to_string();
+
+    // 创建 oneshot channel 等待 scheduler 进程的响应
+    let (tx, rx) = oneshot::channel();
+    {
+        let mut pending = state.pending_injects.lock().unwrap();
+        pending.insert(request_id.clone(), tx);
+    }
+
+    // 构造注入命令 JSON，写入 scheduler 进程的 stdin
+    let inject_cmd = serde_json::json!({
+        "request_id": request_id,
+        "trace_id": request.trace_id,
+        "content": request.content,
+        "target_worker_type": request.target_worker_type,
+        "route": request.route,
+        "urgent": request.urgent,
+    });
+
+    let cmd_line = format!("__INJECT__:{}\n", inject_cmd);
+
+    {
+        let mut stdin_lock = state.scheduler_stdin.lock().await;
+        match stdin_lock.as_mut() {
+            Some(stdin) => {
+                if let Err(e) = stdin.write_all(cmd_line.as_bytes()).await {
+                    // stdin 写入失败，清理 pending
+                    let mut pending = state.pending_injects.lock().unwrap();
+                    pending.remove(&request_id);
+                    return Ok(TaskResult::err(&format!("写入 scheduler stdin 失败: {}", e)));
+                }
+            }
+            None => {
+                // 没有运行中的 scheduler 进程
+                let mut pending = state.pending_injects.lock().unwrap();
+                pending.remove(&request_id);
+                return Ok(TaskResult::err("当前没有运行中的任务，无法注入补充信息"));
+            }
+        }
+    }
+
+    // 等待响应，超时 30 秒
+    match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+        Ok(Ok(result)) => {
+            // scheduler 返回的 JSON 结果
+            let data = serde_json::to_string(&result).unwrap_or_default();
+            Ok(TaskResult::ok_with_data("补充信息注入完成", data))
+        }
+        Ok(Err(_)) => {
+            // channel 被关闭（scheduler 进程退出）
+            Ok(TaskResult::err("scheduler 进程已退出，注入未完成"))
+        }
+        Err(_) => {
+            // 超时
+            let mut pending = state.pending_injects.lock().unwrap();
+            pending.remove(&request_id);
+            Ok(TaskResult::err("注入超时（30秒未收到响应）"))
+        }
+    }
 }
 
 // ==================== 数据库日志查询 ====================

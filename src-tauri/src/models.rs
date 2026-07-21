@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
+use tokio::process::ChildStdin;
+use tokio::sync::{oneshot, Mutex as TokioMutex};
 
 // ==================== 应用状态 ====================
 
@@ -9,6 +11,11 @@ pub struct AppState {
     pub running_tasks: Mutex<HashMap<String, RunningTask>>,
     /// 当前会话ID
     pub session_id: Mutex<String>,
+    /// 运行中 scheduler 子进程的 stdin（用于注入补充信息等命令）
+    /// 使用 tokio::sync::Mutex 因为需要在 async 上下文中跨 await 持有
+    pub scheduler_stdin: TokioMutex<Option<ChildStdin>>,
+    /// 待响应的注入请求（request_id -> oneshot Sender）
+    pub pending_injects: Mutex<HashMap<String, oneshot::Sender<serde_json::Value>>>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -169,4 +176,21 @@ pub struct LogContent {
     pub file_name: String,
     pub content: String,
     pub size: u64,
+}
+
+// ==================== 补充信息注入 ====================
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct InjectInfoRequest {
+    pub trace_id: String,
+    pub content: String,
+    /// 定向路由时指定的Worker类型（如 code_agent / data_agent）
+    #[serde(default)]
+    pub target_worker_type: Option<String>,
+    /// 路由模式: directed / smart / broadcast（留空则自动判断）
+    #[serde(default)]
+    pub route: Option<String>,
+    /// 紧急标记，触发强制中断注入
+    #[serde(default)]
+    pub urgent: bool,
 }
