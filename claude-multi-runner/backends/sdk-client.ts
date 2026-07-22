@@ -299,7 +299,7 @@ export class ClaudeSDKClient {
             const toolUses = content.filter((block: any) => block.type === 'tool_use');
             for (const toolUse of toolUses) {
               const toolInfo = `[tool_use] 使用工具:${toolUse.id}，${toolUse.name}:${JSON.stringify(toolUse.input)}`;
-              log({ logFile, message: toolInfo, sessionId, silent: false });
+              log({ logFile, message: toolInfo, sessionId, silent: true });
             }
           }
         }

@@ -134,7 +134,7 @@ export class ClaudeLink extends EventEmitter {
 
   public checkInbox(workerId: string): Message[] {
     const messages = this.db.getPendingMessages(workerId);
-    log({ prefix: 'ClaudeLink', message: `Worker ${workerId} 收件箱有 ${messages.length} 条消息` });
+    log({ prefix: 'ClaudeLink', message: `Worker ${workerId} 收件箱有 ${messages.length} 条消息`, silent: true });
     return messages;
   }
 

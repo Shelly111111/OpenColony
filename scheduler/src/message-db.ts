@@ -16,7 +16,6 @@ export class MessageDB {
     }
 
     this.db = new Database(finalPath, {
-      verbose: (msg?: unknown) => { if (msg != null) process.stderr.write(String(msg) + '\n'); },
       timeout: 5000
     });
 
