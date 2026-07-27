@@ -48,7 +48,6 @@ export class MasterScheduler {
       defaultMaxRetries: config.defaultMaxRetries || 3,
       defaultTimeoutMs: config.defaultTimeoutMs || 30 * 60 * 1000, // 30分钟
       arbitrationMode: config.arbitrationMode || ArbitrationMode.CONFIDENCE_VOTE,
-      enableReview: config.enableReview !== undefined ? config.enableReview : true,
       workerTypes: config.workerTypes || ['general_agent'],
       runMode: config.runMode || 'pty' // 添加 runMode，默认 pty
     };
@@ -125,39 +124,15 @@ export class MasterScheduler {
       }
 
       // 5. 仲裁冲突，合并结果
-      log({ logFile: masterLogFile, prefix: 'Master', message: `开始仲裁合并 ${validOutputs.length} 个有效输出`, traceId, taskId: task.id });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `开始仲裁合并 ${validOutputs.length} 个有效输出`, traceId, taskId: task.id, silent: true });
       const arbitrationResult = await this.arbitrationEngine.arbitrate(validOutputs, task);
 
       if (!arbitrationResult.resolved) {
-        if (arbitrationResult.requiresUserInput) {
-          log({ logFile: masterLogFile, prefix: 'Master', message: `需要用户输入: ${arbitrationResult.userPrompt}`, traceId, taskId: task.id });
-        }
         throw new Error(`仲裁失败: ${arbitrationResult.conflicts?.join(', ')}`);
       }
 
-      // 6. 如果启用评审，调用独立评审Agent二次校验
-      let finalOutput = arbitrationResult.finalOutput;
-      if (this.config.enableReview) {
-        log({ logFile: masterLogFile, prefix: 'Master', message: `启动独立评审Agent校验结果`, traceId, taskId: task.id });
-        const reviewResult = await this.performReviewWithLLM(finalOutput, task, masterLogFile);
-
-        if (!reviewResult.passed) {
-          log({ logFile: masterLogFile, prefix: 'Master', message: `评审未通过: ${reviewResult.feedback}`, level: 'warn', traceId, taskId: task.id });
-          log({ logFile: masterLogFile, prefix: 'Master', message: `将尝试根据评审意见改进...`, level: 'warn', traceId, taskId: task.id });
-
-          // 可以在这里添加改进逻辑
-        } else {
-          log({ logFile: masterLogFile, prefix: 'Master', message: `评审通过`, traceId, taskId: task.id });
-        }
-
-        // 将评审结果也附加到最终输出中
-        finalOutput = {
-          mainResult: finalOutput,
-          review: reviewResult
-        };
-      }
-
-      // 7. 生成最终结果
+      // 6. 生成最终结果
+      const finalOutput = arbitrationResult.finalOutput;
       task.output = finalOutput;
       task.status = TaskStatus.COMPLETED;
       task.completedAt = new Date();
@@ -228,79 +203,6 @@ export class MasterScheduler {
       }
       return output.status !== "fail" || output.confidence > 0.5;
     });
-  }
-
-  /**
-   * 使用LLM执行独立评审
-   */
-  private async performReviewWithLLM(output: any, task: MainTask, masterLogFile?: string): Promise<{
-    passed: boolean;
-    feedback: string;
-    issues?: string[];
-    suggestions?: string[];
-  }> {
-    log({ logFile: masterLogFile, prefix: 'Master', message: `调用LLM进行评审...`, traceId: task.traceId, taskId: task.id });
-
-    const llm = getLLMClient();
-
-    const systemPrompt = `你是一位专业的独立评审专家。你的职责是：
-1. 评估任务结果是否满足原始需求
-2. 识别可能存在的问题和不足
-3. 提供具体、建设性的改进建议
-4. 给出最终的评审结论
-
-请用JSON格式返回你的评审结果。`;
-
-    const outputStr = typeof output === 'string'
-      ? output
-      : JSON.stringify(output, null, 2);
-
-    const userPrompt = `请评审以下任务执行结果：
-
-## 原始任务需求
-${task.userRequest}
-
-## 任务约束
-${task.constraints.length > 0 ? task.constraints.join('; ') : '无'}
-
-## 交付标准
-${task.deliveryStandards.length > 0 ? task.deliveryStandards.join('; ') : '无'}
-
-## 执行结果
-${outputStr}
-
-## 请给出评审结果（JSON格式）
-{
-  "passed": true/false,
-  "feedback": "详细的评审反馈",
-  "issues": ["问题1", "问题2"],
-  "suggestions": ["建议1", "建议2"],
-  "score": 0.85  // 0-1之间的评分
-}`;
-
-    const response = await llm.askForJSON<{
-      passed: boolean;
-      feedback: string;
-      issues?: string[];
-      suggestions?: string[];
-      score?: number;
-    }>(userPrompt, {
-      systemPrompt,
-      temperature: 0.5
-    });
-
-    if (!response.success || !response.data) {
-      log({ logFile: masterLogFile, prefix: 'Master', message: `评审LLM调用失败，默认通过: ${response.error}`, level: 'warn', traceId: task.traceId, taskId: task.id });
-      return {
-        passed: true,
-        feedback: '评审过程出现问题，默认通过。错误: ' + response.error
-      };
-    }
-
-    log({ logFile: masterLogFile, prefix: 'Master', message: `评审完成，结果: ${response.data.passed ? '通过' : '未通过'}, 评分: ${response.data.score || 'N/A'}`, traceId: task.traceId, taskId: task.id });
-    log({ logFile: masterLogFile, prefix: 'Master', message: `评审反馈: ${response.data.feedback}`, traceId: task.traceId, taskId: task.id });
-
-    return response.data;
   }
 
   /**

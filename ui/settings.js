@@ -16,6 +16,12 @@ async function loadSettings() {
     document.getElementById('permissionTimeout').value = config.permission_timeout_ms || 120;
     window.permissionTimeoutMs = (config.permission_timeout_ms || 120) * 1000;
 
+    // 任务执行配置
+    document.getElementById('arbitrationMode').value = config.arbitration_mode || 'confidence_vote';
+    document.getElementById('sameLayerAsync').value = String(config.same_layer_async !== undefined ? config.same_layer_async : true);
+    document.getElementById('maxConcurrency').value = config.max_concurrency || 5;
+    document.getElementById('taskTimeout').value = Math.round((config.task_timeout_ms || 600000) / 1000);
+
     document.getElementById('runModeSelect').value = config.run_mode || 'sdk';
     document.getElementById('permissionModeSelect').value = config.permission_mode || 'ask';
     document.getElementById('runModeDisplay').textContent = `模式: ${(config.run_mode || 'sdk').toUpperCase()} | 权限: ${(config.permission_mode || 'ask').toUpperCase()}`;
@@ -36,6 +42,10 @@ async function saveSettings() {
     run_mode: document.getElementById('runModeCfg').value,
     permission_mode: document.getElementById('permissionMode').value,
     permission_timeout_ms: parseInt(document.getElementById('permissionTimeout').value) || 120,
+    arbitration_mode: document.getElementById('arbitrationMode').value,
+    same_layer_async: document.getElementById('sameLayerAsync').value === 'true',
+    max_concurrency: parseInt(document.getElementById('maxConcurrency').value) || 5,
+    task_timeout_ms: (parseInt(document.getElementById('taskTimeout').value) || 600) * 1000,
   };
 
   try {

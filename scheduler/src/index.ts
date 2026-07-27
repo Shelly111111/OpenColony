@@ -175,7 +175,6 @@ async function runDefaultMode(mode: 'sdk' | 'pty' = 'sdk', userRequest?: string)
   const scheduler = new MasterScheduler({
     maxWorkers: 3,
     arbitrationMode: 'confidence_vote' as ArbitrationMode,
-    enableReview: true,
     workerTypes: ['general_agent', 'code_agent', 'review_agent'],
     runMode: mode // 设置运行模式
   });
@@ -200,7 +199,6 @@ async function runDefaultMode(mode: 'sdk' | 'pty' = 'sdk', userRequest?: string)
     log({ message: `配置信息:` });
     log({ message: `- 最大Worker数: 3` });
     log({ message: `- 仲裁模式: confidence_vote` });
-    log({ message: `- 评审功能: 已启用` });
 
     // 如果提供了任务请求，执行该任务
     if (userRequest) {
@@ -277,8 +275,7 @@ CLI模式选项:
   --name <任务名称>        任务名称
   --priority <优先级>      任务优先级 (P0/P1/P2, 默认: P1)
   --workers <数量>         最大Worker数量 (默认: 3)
-  --mode <仲裁模式>        仲裁模式 (confidence_vote/agent_priority/merge_diff, 默认: confidence_vote)
-  --no-review              禁用独立评审
+  --mode <仲裁模式>        仲裁模式 (confidence_vote/merge_diff, 默认: confidence_vote)
 `);
 }
 
@@ -292,7 +289,6 @@ async function runCommand(args: string[]) {
     priority?: TaskPriority;
     maxWorkers?: number;
     arbitrationMode?: ArbitrationMode;
-    enableReview?: boolean;
   } = {};
 
   // 解析参数
@@ -321,14 +317,11 @@ async function runCommand(args: string[]) {
           break;
         case "--mode":
           const mode = args[++i];
-          if (["confidence_vote", "agent_priority", "merge_diff"].includes(mode)) {
+          if (["confidence_vote", "merge_diff"].includes(mode)) {
             options.arbitrationMode = mode as ArbitrationMode;
           } else {
             log({ message: `无效的仲裁模式: ${mode}，使用默认值 confidence_vote`, level: 'error' });
           }
-          break;
-        case "--no-review":
-          options.enableReview = false;
           break;
         default:
           log({ message: `未知选项: ${arg}`, level: 'warn' });
@@ -354,7 +347,6 @@ async function runCommand(args: string[]) {
   const scheduler = new MasterScheduler({
     maxWorkers: options.maxWorkers,
     arbitrationMode: options.arbitrationMode,
-    enableReview: options.enableReview !== undefined ? options.enableReview : true,
     workerTypes: ['general_agent', 'code_agent', 'review_agent']
   });
 
@@ -429,7 +421,6 @@ async function runTest() {
   // 创建调度器
   const scheduler = new MasterScheduler({
     maxWorkers: 2,
-    enableReview: false,
     workerTypes: ['general_agent']
   });
 

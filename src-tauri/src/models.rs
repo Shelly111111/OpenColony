@@ -20,6 +20,14 @@ pub struct AppState {
     pub permission_mode: Mutex<String>,
     /// 权限审批超时（秒）
     pub permission_timeout_ms: Mutex<i32>,
+    /// 仲裁模式
+    pub arbitration_mode: Mutex<String>,
+    /// 同层并发
+    pub same_layer_async: Mutex<bool>,
+    /// 最大并发数
+    pub max_concurrency: Mutex<i32>,
+    /// 任务超时（毫秒）
+    pub task_timeout_ms: Mutex<i32>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -147,6 +155,14 @@ pub struct SystemConfig {
     pub permission_mode: String,
     #[serde(default = "default_permission_timeout_ms")]
     pub permission_timeout_ms: i32,
+    #[serde(default = "default_arbitration_mode")]
+    pub arbitration_mode: String,
+    #[serde(default = "default_same_layer_async")]
+    pub same_layer_async: bool,
+    #[serde(default = "default_max_concurrency")]
+    pub max_concurrency: i32,
+    #[serde(default = "default_task_timeout_ms")]
+    pub task_timeout_ms: i32,
 }
 
 fn default_run_mode() -> String {
@@ -159,6 +175,22 @@ fn default_permission_mode() -> String {
 
 fn default_permission_timeout_ms() -> i32 {
     120
+}
+
+fn default_arbitration_mode() -> String {
+    "confidence_vote".to_string()
+}
+
+fn default_same_layer_async() -> bool {
+    true
+}
+
+fn default_max_concurrency() -> i32 {
+    5
+}
+
+fn default_task_timeout_ms() -> i32 {
+    600000
 }
 
 impl Default for SystemConfig {
@@ -174,6 +206,10 @@ impl Default for SystemConfig {
             run_mode: "sdk".to_string(),
             permission_mode: "ask".to_string(),
             permission_timeout_ms: 120,
+            arbitration_mode: "confidence_vote".to_string(),
+            same_layer_async: true,
+            max_concurrency: 5,
+            task_timeout_ms: 600000,
         }
     }
 }

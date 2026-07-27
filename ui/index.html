@@ -291,6 +291,43 @@
             </div>
           </div>
 
+          <div class="settings-card">
+            <div class="settings-card-header">
+              <h3>⚙️ 任务执行配置</h3>
+            </div>
+            <div class="settings-body">
+              <div class="form-row">
+                <div class="form-group">
+                  <label>仲裁模式</label>
+                  <select id="arbitrationMode" class="form-select">
+                    <option value="confidence_vote">置信度投票（推荐）</option>
+                    <option value="merge_diff">差异合并</option>
+                  </select>
+                  <span class="form-hint">多Worker结果合并策略</span>
+                </div>
+                <div class="form-group">
+                  <label>同层并发</label>
+                  <select id="sameLayerAsync" class="form-select">
+                    <option value="true">启用（同层Worker并行执行）</option>
+                    <option value="false">禁用（同层Worker顺序执行）</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>最大并发数</label>
+                  <input id="maxConcurrency" type="number" class="form-input" min="1" max="20" value="5" step="1">
+                  <span class="form-hint">同层最大并行Worker数</span>
+                </div>
+                <div class="form-group">
+                  <label>任务超时(秒)</label>
+                  <input id="taskTimeout" type="number" class="form-input" min="60" max="3600" value="600" step="60">
+                  <span class="form-hint">单个Worker执行超时时间</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="settings-actions">
             <button class="btn-primary large" onclick="saveSettings()">💾 保存配置</button>
           </div>

@@ -1,6 +1,10 @@
 /**
  * 输出标准化与仲裁引擎
- * 实现统一输出Schema、冲突仲裁、结果合并功能
+ * 使用 LLM 进行智能仲裁，替代机械规则
+ *
+ * 仲裁模式：
+ * - confidence_vote：LLM 依次对每个输出打分，选出最高分返回
+ * - merge_diff：LLM 根据用户提问，将所有输出合并为一份
  */
 
 import {
@@ -12,6 +16,7 @@ import {
   WorkerOutputSchema
 } from './types';
 import { log } from './logger';
+import { getLLMClient } from './llm-client';
 
 export class ArbitrationEngine {
   private config: SchedulerConfig;
@@ -24,7 +29,7 @@ export class ArbitrationEngine {
    * 仲裁多个Worker的输出，合并为最终结果
    */
   async arbitrate(outputs: WorkerOutput[], task: MainTask): Promise<ArbitrationResult> {
-    log({ prefix: 'ArbitrationEngine', message: `开始仲裁 ${outputs.length} 个输出，模式: ${this.config.arbitrationMode}` });
+    log({ prefix: 'ArbitrationEngine', message: `开始仲裁 ${outputs.length} 个输出，模式: ${this.config.arbitrationMode}`, silent: true });
 
     if (outputs.length === 0) {
       return {
@@ -35,7 +40,7 @@ export class ArbitrationEngine {
     }
 
     if (outputs.length === 1) {
-      log({ prefix: 'ArbitrationEngine', message: `只有一个输出，直接使用` });
+      log({ prefix: 'ArbitrationEngine', message: `只有一个输出，直接使用`, silent: true });
       return {
         resolved: true,
         finalOutput: outputs[0].data,
@@ -43,262 +48,138 @@ export class ArbitrationEngine {
       };
     }
 
-    // 根据仲裁模式选择不同的策略
     switch (this.config.arbitrationMode) {
       case ArbitrationMode.CONFIDENCE_VOTE:
-        return this.confidenceVoteArbitration(outputs, task);
-      case ArbitrationMode.AGENT_PRIORITY:
-        return this.agentPriorityArbitration(outputs, task);
+        return this.llmConfidenceVote(outputs, task);
       case ArbitrationMode.MERGE_DIFF:
-        return this.mergeDiffArbitration(outputs, task);
+        return this.llmMergeDiff(outputs, task);
       default:
-        return this.confidenceVoteArbitration(outputs, task);
+        return this.llmConfidenceVote(outputs, task);
     }
   }
 
   /**
-   * 置信度投票仲裁
-   * 选择置信度最高的输出
+   * 置信度投票：LLM 依次对每个输出打分，选出最高分返回
    */
-  private confidenceVoteArbitration(outputs: WorkerOutput[], task: MainTask): ArbitrationResult {
-    log({ prefix: 'ArbitrationEngine', message: `使用置信度投票仲裁` });
+  private async llmConfidenceVote(outputs: WorkerOutput[], task: MainTask): Promise<ArbitrationResult> {
+    log({ prefix: 'ArbitrationEngine', message: `使用 LLM 置信度投票仲裁`, silent: true });
 
-    // 按置信度排序
-    const sortedOutputs = [...outputs].sort((a, b) => b.confidence - a.confidence);
-    const highestConfidence = sortedOutputs[0].confidence;
+    const llm = getLLMClient();
+    const userRequest = task.userRequest;
+    const outputTexts = outputs.map((o, i) => {
+      const data = typeof o.data === 'string' ? o.data : JSON.stringify(o.data, null, 2);
+      return `--- 输出 #${i + 1} (来自 ${o.source_agent}) ---\n${data}`;
+    }).join('\n\n');
 
-    // 检查是否有多个输出置信度相同且最高
-    const topOutputs = sortedOutputs.filter(o => o.confidence === highestConfidence);
+    const systemPrompt = `你是一位专业的评审专家。你需要根据用户的原始需求，对每个Worker的输出进行评分。
+请严格按照JSON格式返回评分结果，不要输出其他内容。`;
 
-    if (topOutputs.length === 1) {
-      log({ prefix: 'ArbitrationEngine', message: `选择置信度最高的输出: ${highestConfidence}` });
+    const userPrompt = `## 用户原始需求
+${userRequest}
+
+## 各Worker的输出
+${outputTexts}
+
+## 评分要求
+对每个输出评分（0-10分），评估其是否准确、完整地满足了用户需求。
+返回JSON格式：
+{
+  "scores": [
+    {"index": 1, "score": 8, "reason": "简要评分理由"},
+    {"index": 2, "score": 6, "reason": "简要评分理由"}
+  ],
+  "best_index": 1,
+  "best_reason": "选择该输出的理由"
+}`;
+
+    const response = await llm.askForJSON<{
+      scores: Array<{ index: number; score: number; reason: string }>;
+      best_index: number;
+      best_reason: string;
+    }>(userPrompt, { systemPrompt, temperature: 0.3 });
+
+    if (!response.success || !response.data) {
+      log({ prefix: 'ArbitrationEngine', message: `LLM评分失败，回退到选择第一个输出: ${response.error}`, level: 'warn', silent: true });
       return {
         resolved: true,
-        finalOutput: topOutputs[0].data,
+        finalOutput: outputs[0].data,
         requiresUserInput: false
       };
     }
 
-    // 多个输出置信度相同，尝试合并
-    log({ prefix: 'ArbitrationEngine', message: `有 ${topOutputs.length} 个输出置信度相同，尝试合并` });
-    return this.tryMergeOutputs(topOutputs, task);
-  }
+    const { scores, best_index, best_reason } = response.data;
+    const scoreSummary = scores.map(s => `#${s.index}: ${s.score}分 (${s.reason})`).join(', ');
+    log({ prefix: 'ArbitrationEngine', message: `LLM评分: ${scoreSummary}`, silent: true });
+    log({ prefix: 'ArbitrationEngine', message: `选择 #${best_index}: ${best_reason}`, silent: true });
 
-  /**
-   * Agent优先级仲裁
-   * 高优先级Agent的输出具有更高权重
-   */
-  private agentPriorityArbitration(outputs: WorkerOutput[], task: MainTask): ArbitrationResult {
-    log({ prefix: 'ArbitrationEngine', message: `使用Agent优先级仲裁` });
-
-    // 定义Agent优先级（数值越大优先级越高）
-    const agentPriority: Record<string, number> = {
-      'review_agent': 10,  // 评审Agent最高优先级
-      'code_agent': 8,
-      'general_agent': 5
-    };
-
-    // 按Agent优先级排序
-    const sortedOutputs = [...outputs].sort((a, b) => {
-      const priorityA = agentPriority[a.source_agent] || 0;
-      const priorityB = agentPriority[b.source_agent] || 0;
-      return priorityB - priorityA;
-    });
-
-    const highestPriority = agentPriority[sortedOutputs[0].source_agent] || 0;
-    const topOutputs = sortedOutputs.filter(o =>
-      (agentPriority[o.source_agent] || 0) === highestPriority
-    );
-
-    if (topOutputs.length === 1) {
-      log({ prefix: 'ArbitrationEngine', message: `选择最高优先级Agent ${topOutputs[0].source_agent} 的输出` });
+    const bestIdx = best_index - 1; // 转为0-based
+    if (bestIdx >= 0 && bestIdx < outputs.length) {
       return {
         resolved: true,
-        finalOutput: topOutputs[0].data,
+        finalOutput: outputs[bestIdx].data,
         requiresUserInput: false
       };
     }
 
-    // 多个同优先级Agent输出，再按置信度排序
-    log({ prefix: 'ArbitrationEngine', message: `有 ${topOutputs.length} 个同优先级Agent输出，按置信度选择` });
-    return this.confidenceVoteArbitration(topOutputs, task);
-  }
-
-  /**
-   * 差异合并仲裁
-   * 尝试合并多个互补的输出
-   */
-  private mergeDiffArbitration(outputs: WorkerOutput[], task: MainTask): ArbitrationResult {
-    log({ prefix: 'ArbitrationEngine', message: `使用差异合并仲裁` });
-
-    // 尝试合并所有输出
-    return this.tryMergeOutputs(outputs, task);
-  }
-
-  /**
-   * 尝试合并多个输出
-   */
-  private tryMergeOutputs(outputs: WorkerOutput[], task: MainTask): ArbitrationResult {
-    // 检查输出类型
-    const outputTypes = outputs.map(o => typeof o.data);
-    const allSameType = outputTypes.every(t => t === outputTypes[0]);
-
-    if (!allSameType) {
-      log({ prefix: 'ArbitrationEngine', message: `输出类型不一致: ${outputTypes.join(', ')}`, level: 'warn' });
-      log({ prefix: 'ArbitrationEngine', message: `将采用选择置信度最高的单个输出策略` });
-      const sortedByConfidence = [...outputs].sort((a, b) => b.confidence - a.confidence);
-      return {
-        resolved: true,
-        finalOutput: sortedByConfidence[0].data,
-        requiresUserInput: false
-      };
-    }
-
-    const dataType = outputTypes[0];
-
-    try {
-      const allArrays = outputs.every(o => Array.isArray(o.data));
-      if (allArrays) {
-        return this.mergeArrayOutputs(outputs);
-      }
-
-      switch (dataType) {
-        case 'string':
-          return this.mergeStringOutputs(outputs);
-        case 'object':
-          return this.mergeObjectOutputs(outputs);
-        default:
-          return this.mergePrimitiveOutputs(outputs);
-      }
-    } catch (error) {
-      log({ prefix: 'ArbitrationEngine', message: `合并失败: ${error}`, level: 'error' });
-      log({ prefix: 'ArbitrationEngine', message: `合并失败，回退到选择置信度最高的输出` });
-      const sortedByConfidence = [...outputs].sort((a, b) => b.confidence - a.confidence);
-      return {
-        resolved: true,
-        finalOutput: sortedByConfidence[0].data,
-        requiresUserInput: false
-      };
-    }
-  }
-
-  /**
-   * 合并字符串输出
-   */
-  private mergeStringOutputs(outputs: WorkerOutput[]): ArbitrationResult {
-    const uniqueContents = new Set<string>();
-    outputs.forEach(o => {
-      if (typeof o.data === 'string') {
-        uniqueContents.add(o.data.trim());
-      }
-    });
-
-    const merged = Array.from(uniqueContents).join('\n\n---\n\n');
-
+    // fallback
     return {
       resolved: true,
-      finalOutput: merged,
+      finalOutput: outputs[0].data,
       requiresUserInput: false
     };
   }
 
   /**
-   * 合并对象输出
+   * 差异合并：LLM 根据用户提问，将所有输出合并为一份
    */
-  private mergeObjectOutputs(outputs: WorkerOutput[]): ArbitrationResult {
-    const merged: any = {};
+  private async llmMergeDiff(outputs: WorkerOutput[], task: MainTask): Promise<ArbitrationResult> {
+    log({ prefix: 'ArbitrationEngine', message: `使用 LLM 差异合并仲裁`, silent: true });
 
-    outputs.forEach(o => {
-      if (typeof o.data === 'object' && o.data !== null) {
-        this.deepMerge(merged, o.data);
-      }
-    });
+    const llm = getLLMClient();
+    const userRequest = task.userRequest;
+    const outputTexts = outputs.map((o, i) => {
+      const data = typeof o.data === 'string' ? o.data : JSON.stringify(o.data, null, 2);
+      return `--- 输出 #${i + 1} (来自 ${o.source_agent}) ---\n${data}`;
+    }).join('\n\n');
 
-    return {
-      resolved: true,
-      finalOutput: merged,
-      requiresUserInput: false
-    };
-  }
+    const systemPrompt = `你是一位专业的内容整合专家。你需要根据用户的原始需求，将多个Worker的输出合并为一份高质量的综合结果。
+合并时请注意：
+1. 去除重复内容
+2. 保留各输出中有价值的独到见解
+3. 确保合并结果逻辑连贯、结构清晰
+4. 直接输出合并后的内容，不要添加"合并结果"等前缀`;
 
-  /**
-   * 合并数组输出
-   */
-  private mergeArrayOutputs(outputs: WorkerOutput[]): ArbitrationResult {
-    const merged: any[] = [];
-    const seen = new Set<string>();
+    const userPrompt = `## 用户原始需求
+${userRequest}
 
-    outputs.forEach(o => {
-      if (Array.isArray(o.data)) {
-        o.data.forEach(item => {
-          const key = JSON.stringify(item);
-          if (!seen.has(key)) {
-            seen.add(key);
-            merged.push(item);
-          }
-        });
-      }
-    });
+## 各Worker的输出
+${outputTexts}
 
-    return {
-      resolved: true,
-      finalOutput: merged,
-      requiresUserInput: false
-    };
-  }
+请将以上所有输出合并为一份综合结果，直接输出合并内容。`;
 
-  /**
-   * 合并基本类型输出
-   */
-  private mergePrimitiveOutputs(outputs: WorkerOutput[]): ArbitrationResult {
-    const valueCounts = new Map<any, number>();
+    const response = await llm.ask(userPrompt, { systemPrompt, temperature: 0.3 });
 
-    outputs.forEach(o => {
-      const value = o.data;
-      valueCounts.set(value, (valueCounts.get(value) || 0) + 1);
-    });
-
-    let maxCount = 0;
-    let mostFrequent: any = null;
-
-    valueCounts.forEach((count, value) => {
-      if (count > maxCount) {
-        maxCount = count;
-        mostFrequent = value;
-      }
-    });
-
-    if (maxCount === 1 || valueCounts.size === outputs.length) {
-      const sortedByConfidence = [...outputs].sort((a, b) => b.confidence - a.confidence);
-      mostFrequent = sortedByConfidence[0].data;
+    if (!response.success || !response.content) {
+      log({ prefix: 'ArbitrationEngine', message: `LLM合并失败，回退到拼接输出: ${response.error}`, level: 'warn', silent: true });
+      // fallback: 拼接所有输出
+      const merged = outputs.map((o, i) => {
+        const data = typeof o.data === 'string' ? o.data : JSON.stringify(o.data, null, 2);
+        return `## 输出 #${i + 1} (${o.source_agent})\n${data}`;
+      }).join('\n\n---\n\n');
+      return {
+        resolved: true,
+        finalOutput: merged,
+        requiresUserInput: false
+      };
     }
 
+    log({ prefix: 'ArbitrationEngine', message: `LLM合并完成`, silent: true });
+
     return {
       resolved: true,
-      finalOutput: mostFrequent,
+      finalOutput: response.content,
       requiresUserInput: false
     };
-  }
-
-  /**
-   * 深度合并对象
-   */
-  private deepMerge(target: any, source: any): void {
-    for (const key in source) {
-      if (source.hasOwnProperty(key)) {
-        if (
-          typeof source[key] === 'object' &&
-          source[key] !== null &&
-          !Array.isArray(source[key]) &&
-          typeof target[key] === 'object' &&
-          target[key] !== null
-        ) {
-          this.deepMerge(target[key], source[key]);
-        } else {
-          target[key] = source[key];
-        }
-      }
-    }
   }
 
   /**

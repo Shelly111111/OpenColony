@@ -48,7 +48,6 @@ export enum TaskPriority {
  */
 export enum ArbitrationMode {
   CONFIDENCE_VOTE = "confidence_vote",
-  AGENT_PRIORITY = "agent_priority",
   MERGE_DIFF = "merge_diff"
 }
 
@@ -167,7 +166,6 @@ export interface SchedulerConfig {
   defaultMaxRetries: number;
   defaultTimeoutMs: number;
   arbitrationMode: ArbitrationMode;
-  enableReview: boolean;
   workerTypes: string[];
   runMode?: 'sdk' | 'pty'; // 运行模式：sdk（默认）或 pty
   permissionMode?: PermissionMode; // 权限模式：auto/ask/bypass，默认 ask

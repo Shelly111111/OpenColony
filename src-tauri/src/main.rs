@@ -20,6 +20,10 @@ fn main() {
         pending_injects: Mutex::new(HashMap::new()),
         permission_mode: Mutex::new("ask".to_string()),
         permission_timeout_ms: Mutex::new(120),
+        arbitration_mode: Mutex::new("confidence_vote".to_string()),
+        same_layer_async: Mutex::new(true),
+        max_concurrency: Mutex::new(5),
+        task_timeout_ms: Mutex::new(600000),
     };
 
     tauri::Builder::default()

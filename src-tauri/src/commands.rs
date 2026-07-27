@@ -62,6 +62,10 @@ pub async fn submit_task(
         .env("LOG_FORMAT", "json")
         .env("PERMISSION_MODE", &state.permission_mode.lock().unwrap().clone())
         .env("PERMISSION_TIMEOUT_MS", format!("{}", state.permission_timeout_ms.lock().unwrap().clone() * 1000))
+        .env("ARBITRATION_MODE", &state.arbitration_mode.lock().unwrap().clone())
+        .env("SAME_LAYER_ASYNC", format!("{}", state.same_layer_async.lock().unwrap().clone()))
+        .env("MAX_CONCURRENCY", format!("{}", state.max_concurrency.lock().unwrap().clone()))
+        .env("TASK_TIMEOUT_MS", format!("{}", state.task_timeout_ms.lock().unwrap().clone()))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::piped());
@@ -549,6 +553,10 @@ pub fn get_system_config() -> SystemConfig {
         run_mode: stored.run_mode,
         permission_mode: env.get("PERMISSION_MODE").cloned().unwrap_or_else(|| stored.permission_mode.clone()),
         permission_timeout_ms: env.get("PERMISSION_TIMEOUT_MS").and_then(|v| v.parse().ok()).unwrap_or(stored.permission_timeout_ms),
+        arbitration_mode: env.get("ARBITRATION_MODE").cloned().unwrap_or_else(|| stored.arbitration_mode.clone()),
+        same_layer_async: env.get("SAME_LAYER_ASYNC").and_then(|v| v.parse().ok()).unwrap_or(stored.same_layer_async),
+        max_concurrency: env.get("MAX_CONCURRENCY").and_then(|v| v.parse().ok()).unwrap_or(stored.max_concurrency),
+        task_timeout_ms: env.get("TASK_TIMEOUT_MS").and_then(|v| v.parse().ok()).unwrap_or(stored.task_timeout_ms),
     }
 }
 
@@ -578,7 +586,7 @@ pub fn save_system_config(config: SystemConfig, state: State<AppState>) -> TaskR
     match serde_json::to_string_pretty(&to_store) {
         Ok(json) => match fs::write(&cfg_path, json) {
             Ok(_) => {
-                // 3. 更新 AppState 中的权限相关字段
+                // 3. 更新 AppState 中的配置字段
                 {
                     let mut pm = state.permission_mode.lock().unwrap();
                     *pm = to_store.permission_mode.clone();
@@ -586,6 +594,22 @@ pub fn save_system_config(config: SystemConfig, state: State<AppState>) -> TaskR
                 {
                     let mut pt = state.permission_timeout_ms.lock().unwrap();
                     *pt = to_store.permission_timeout_ms;
+                }
+                {
+                    let mut am = state.arbitration_mode.lock().unwrap();
+                    *am = to_store.arbitration_mode.clone();
+                }
+                {
+                    let mut sa = state.same_layer_async.lock().unwrap();
+                    *sa = to_store.same_layer_async;
+                }
+                {
+                    let mut mc = state.max_concurrency.lock().unwrap();
+                    *mc = to_store.max_concurrency;
+                }
+                {
+                    let mut tt = state.task_timeout_ms.lock().unwrap();
+                    *tt = to_store.task_timeout_ms;
                 }
                 utils::log_info(&format!("[Tauri] 配置已保存: .env + {}", cfg_path.display()));
                 TaskResult::ok_with_data(
