@@ -113,13 +113,7 @@
               <div class="empty-state">暂无任务记录，提交任务后将显示在此</div>
             </div>
           </div>
-          <div class="log-viewer-container" id="logViewerContainer" style="display:none">
-            <div class="log-viewer-header">
-              <h3>📄 日志详情 <span id="logFileName" class="log-file-name"></span></h3>
-              <button class="btn-outline" onclick="closeLogViewer()">✕ 关闭</button>
-            </div>
-            <pre class="log-viewer" id="logViewer"></pre>
-          </div>
+          <!-- 日志详情面板将动态插入到点击的任务卡片之后 -->
           <div class="status-bar">
             <span id="taskLogsPath">数据源: MessageDB logs 表</span>
           </div>
