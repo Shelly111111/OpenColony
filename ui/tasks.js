@@ -5,30 +5,80 @@ let _expandedTaskCard = null;
 /** 当前展开的详情面板元素 */
 let _expandedTaskDetail = null;
 
+/** 分页状态 */
+let _allTraces = [];
+let _taskPage = 1;
+const _taskPageSize = 10;
+
 async function loadTaskList() {
   const listEl = document.getElementById('taskList');
   try {
-    const traces = await invoke('get_log_trace_list', {});
-    if (traces.length === 0) {
-      listEl.innerHTML = '<div class="empty-state">暂无任务记录，提交任务后将显示在此</div>';
-    } else {
-      listEl.innerHTML = traces.map(t => `
-        <div class="task-card" onclick="viewTraceLogs(this, '${t.trace_id}')">
-          <div class="task-card-header">
-            <span class="task-badge">📋 ${t.log_count} 条日志</span>
-            <span class="task-time">${formatDbTime(t.created_at)}</span>
-          </div>
-          <div class="task-trace">TraceID: ${t.trace_id}</div>
-          ${t.task_id ? `<div class="task-dir">TaskID: ${t.task_id}</div>` : ''}
-        </div>
-      `).join('');
-    }
+    _allTraces = await invoke('get_log_trace_list', {});
+    _taskPage = 1;
+    renderTaskPage();
   } catch (e) {
     listEl.innerHTML = `<div class="empty-state error">加载失败: ${e}</div>`;
   }
 
   const statusBar = document.getElementById('taskLogsPath');
   if (statusBar) statusBar.textContent = '数据源: MessageDB logs 表';
+}
+
+function renderTaskPage() {
+  const listEl = document.getElementById('taskList');
+  const total = _allTraces.length;
+
+  if (total === 0) {
+    listEl.innerHTML = '<div class="empty-state">暂无任务记录，提交任务后将显示在此</div>';
+    document.getElementById('taskPagination').innerHTML = '';
+    return;
+  }
+
+  const totalPages = Math.ceil(total / _taskPageSize);
+  if (_taskPage > totalPages) _taskPage = totalPages;
+  const start = (_taskPage - 1) * _taskPageSize;
+  const pageTraces = _allTraces.slice(start, start + _taskPageSize);
+
+  listEl.innerHTML = pageTraces.map(t => `
+    <div class="task-card" onclick="viewTraceLogs(this, '${t.trace_id}')">
+      <div class="task-card-header">
+        <span class="task-badge">📋 ${t.log_count} 条日志</span>
+        <span class="task-time">${formatDbTime(t.created_at)}</span>
+      </div>
+      <div class="task-trace">TraceID: ${t.trace_id}</div>
+      ${t.task_id ? `<div class="task-dir">TaskID: ${t.task_id}</div>` : ''}
+    </div>
+  `).join('');
+
+  // 渲染分页控件
+  const pagEl = document.getElementById('taskPagination');
+  if (totalPages <= 1) {
+    pagEl.innerHTML = `<span class="pagination-info">共 ${total} 条</span>`;
+    return;
+  }
+
+  let html = `<span class="pagination-info">共 ${total} 条，第 ${_taskPage}/${totalPages} 页</span><div class="pagination-controls">`;
+  html += `<button class="page-btn" onclick="goTaskPage(1)" ${_taskPage === 1 ? 'disabled' : ''}>«</button>`;
+  html += `<button class="page-btn" onclick="goTaskPage(${_taskPage - 1})" ${_taskPage === 1 ? 'disabled' : ''}>‹</button>`;
+
+  const pStart = Math.max(1, Math.min(_taskPage - 2, totalPages - 4));
+  const pEnd = Math.min(totalPages, pStart + 4);
+  for (let p = pStart; p <= pEnd; p++) {
+    html += `<button class="page-btn ${p === _taskPage ? 'active' : ''}" onclick="goTaskPage(${p})">${p}</button>`;
+  }
+
+  html += `<button class="page-btn" onclick="goTaskPage(${_taskPage + 1})" ${_taskPage === totalPages ? 'disabled' : ''}>›</button>`;
+  html += `<button class="page-btn" onclick="goTaskPage(${totalPages})" ${_taskPage === totalPages ? 'disabled' : ''}>»</button>`;
+  html += `</div>`;
+  pagEl.innerHTML = html;
+}
+
+function goTaskPage(page) {
+  const totalPages = Math.ceil(_allTraces.length / _taskPageSize);
+  if (page < 1 || page > totalPages) return;
+  _taskPage = page;
+  closeTaskDetail();
+  renderTaskPage();
 }
 
 async function viewTraceLogs(cardEl, traceId) {

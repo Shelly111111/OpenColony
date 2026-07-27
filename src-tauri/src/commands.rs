@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Stdio;
 
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -849,50 +850,67 @@ pub struct LogEntry {
     created_at: String,
 }
 
+/// 获取 messages.db 的路径
+fn messages_db_path() -> std::path::PathBuf {
+    paths::app_data_dir().join("messages.db")
+}
+
 #[tauri::command]
 pub fn get_log_trace_list() -> Result<Vec<LogTraceEntry>, String> {
-    let output = std::process::Command::new("node")
-        .current_dir(paths::project_root())
-        .args(["-r", "ts-node/register", &paths::scheduler_entry().to_string_lossy(), "query-logs", "--list"])
-        .env("LOG_FORMAT", "json")
-        .output()
-        .map_err(|e| format!("执行查询失败: {}", e))?;
-
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!("查询日志失败: {}", err));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if stdout.is_empty() {
+    let db_path = messages_db_path();
+    if !db_path.exists() {
         return Ok(vec![]);
     }
 
-    let traces: Vec<LogTraceEntry> = serde_json::from_str(&stdout)
-        .map_err(|e| format!("解析日志数据失败: {}", e))?;
+    let conn = Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .map_err(|e| format!("打开数据库失败: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT trace_id, task_id, MIN(created_at) as created_at, COUNT(*) as log_count FROM logs WHERE trace_id IS NOT NULL GROUP BY trace_id ORDER BY created_at DESC"
+    ).map_err(|e| format!("准备查询失败: {}", e))?;
+
+    let traces = stmt.query_map([], |row| {
+        Ok(LogTraceEntry {
+            trace_id: row.get(0)?,
+            task_id: row.get(1)?,
+            created_at: row.get(2)?,
+            log_count: row.get(3)?,
+        })
+    }).map_err(|e| format!("查询失败: {}", e))?
+    .filter_map(|r| r.ok())
+    .collect();
+
     Ok(traces)
 }
 
 #[tauri::command]
 pub fn get_logs_by_trace_id(trace_id: String) -> Result<Vec<LogEntry>, String> {
-    let output = std::process::Command::new("node")
-        .current_dir(paths::project_root())
-        .args(["-r", "ts-node/register", &paths::scheduler_entry().to_string_lossy(), "query-logs", &trace_id])
-        .env("LOG_FORMAT", "json")
-        .output()
-        .map_err(|e| format!("执行查询失败: {}", e))?;
-
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!("查询日志失败: {}", err));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if stdout.is_empty() {
+    let db_path = messages_db_path();
+    if !db_path.exists() {
         return Ok(vec![]);
     }
 
-    let logs: Vec<LogEntry> = serde_json::from_str(&stdout)
-        .map_err(|e| format!("解析日志数据失败: {}", e))?;
+    let conn = Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .map_err(|e| format!("打开数据库失败: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, trace_id, task_id, worker_id, prefix, message, level, created_at FROM logs WHERE trace_id = ? ORDER BY created_at ASC"
+    ).map_err(|e| format!("准备查询失败: {}", e))?;
+
+    let logs = stmt.query_map([&trace_id], |row| {
+        Ok(LogEntry {
+            id: row.get(0)?,
+            trace_id: row.get(1)?,
+            task_id: row.get(2)?,
+            worker_id: row.get(3)?,
+            prefix: row.get(4)?,
+            message: row.get(5)?,
+            level: row.get(6)?,
+            created_at: row.get(7)?,
+        })
+    }).map_err(|e| format!("查询失败: {}", e))?
+    .filter_map(|r| r.ok())
+    .collect();
+
     Ok(logs)
 }
