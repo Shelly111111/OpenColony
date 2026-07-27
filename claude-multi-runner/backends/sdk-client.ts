@@ -41,11 +41,11 @@ export class ClaudeSDKClient {
   private getSdkPermissionMode(): string {
     switch (this.permissionMode) {
       case PermissionMode.AUTO:
-        return 'auto';
+        return 'acceptEdits';     // 自动接受文件编辑，仅命令需审批
       case PermissionMode.ASK:
-        return 'default';
+        return 'default';         // 每个写入/执行操作需审批
       case PermissionMode.BYPASS:
-        return 'bypassPermissions';
+        return 'bypassPermissions'; // 跳过所有权限检查
       default:
         return 'default';
     }
@@ -267,6 +267,39 @@ export class ClaudeSDKClient {
       const sdkPermissionMode = this.getSdkPermissionMode();
       const isBypass = this.permissionMode === PermissionMode.BYPASS;
 
+      // ---- 权限审批桥接 ----
+      // 当 SDK 需要审批时，通过 __PERM_REQ__: 日志行发送到 Rust 前端
+      // 前端用户审批后，通过 __PERM_RESP__: stdin 写回，resolve pendingPermPromise
+      let pendingPermResolver: ((decision: any) => void) | null = null;
+      const permTimeoutMs = parseInt(process.env.PERMISSION_TIMEOUT_MS || '120000', 10);
+
+      /** 等待前端权限审批响应 */
+      function waitForPermissionResponse(requestId: string): Promise<any> {
+        return new Promise((resolve, reject) => {
+          pendingPermResolver = resolve;
+          const timeout = setTimeout(() => {
+            if (pendingPermResolver === resolve) {
+              pendingPermResolver = null;
+              reject(new Error('权限审批超时'));
+            }
+          }, permTimeoutMs);
+          // 清理 timeout 在 resolve 时
+          const originalResolve = resolve;
+          pendingPermResolver = (decision: any) => {
+            clearTimeout(timeout);
+            originalResolve(decision);
+          };
+        });
+      }
+
+      // 暴露给 index.ts 的权限响应写入接口
+      (globalThis as any).__resolvePermission = (decision: any) => {
+        if (pendingPermResolver) {
+          pendingPermResolver(decision);
+          pendingPermResolver = null;
+        }
+      };
+
       const queryStream = query({
         prompt: generateMessages(),
         options: {
@@ -281,6 +314,48 @@ export class ClaudeSDKClient {
           maxTurns: 50,
           includePartialMessages: true,
           hooks: {
+            // PermissionRequest hook: 桥接到前端审批
+            PermissionRequest: [{
+              hooks: [async (input: any) => {
+                const toolName = input.tool_name || 'unknown';
+                const toolInput = input.tool_input || {};
+                const suggestions = input.permission_suggestions || [];
+                const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+                // 通过 __PERM_REQ__: 日志行发送到 Rust → 前端
+                log({
+                  logFile,
+                  message: `__PERM_REQ__:${JSON.stringify({
+                    request_id: requestId,
+                    worker_id: self.workerId,
+                    tool_name: toolName,
+                    tool_input: toolInput,
+                    permission_suggestions: suggestions,
+                  })}`,
+                  sessionId,
+                  silent: false
+                });
+
+                try {
+                  // 等待前端审批响应
+                  const decision = await waitForPermissionResponse(requestId);
+                  return {
+                    hookSpecificOutput: {
+                      hookEventName: 'PermissionRequest' as const,
+                      decision
+                    }
+                  };
+                } catch (e) {
+                  // 超时或错误，默认拒绝
+                  return {
+                    hookSpecificOutput: {
+                      hookEventName: 'PermissionRequest' as const,
+                      decision: { behavior: 'deny' as const, message: '审批超时，默认拒绝' }
+                    }
+                  };
+                }
+              }]
+            }],
             // Stop hook: Agent 退出时设置跳出标记，让 generator 轮询也退出
             Stop: [{
               hooks: [async (_input: any) => {

@@ -4,7 +4,7 @@ use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 use crate::models::*;
@@ -61,6 +61,7 @@ pub async fn submit_task(
         .arg(&task)
         .env("LOG_FORMAT", "json")
         .env("PERMISSION_MODE", &state.permission_mode.lock().unwrap().clone())
+        .env("PERMISSION_TIMEOUT_MS", format!("{}", state.permission_timeout_ms.lock().unwrap().clone() * 1000))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::piped());
@@ -113,13 +114,26 @@ pub async fn submit_task(
                     let message = parsed.get("message").and_then(|v| v.as_str()).unwrap_or("");
                     let level = parsed.get("level").and_then(|v| v.as_str()).unwrap_or("info");
 
-                    let _ = app_handle.emit_all("scheduler-output", serde_json::json!({
-                        "traceId": trace_id_clone,
-                        "type": "log",
-                        "prefix": prefix,
-                        "message": message,
-                        "level": level,
-                    }));
+                    // 检测权限审批请求：message 以 __PERM_REQ__: 开头
+                    if let Some(perm_json) = message.strip_prefix("__PERM_REQ__:") {
+                        let perm_data: serde_json::Value = serde_json::from_str(perm_json).unwrap_or_default();
+                        let _ = app_handle.emit_all("permission-request", serde_json::json!({
+                            "traceId": trace_id_clone,
+                            "request_id": perm_data.get("request_id").and_then(|v| v.as_str()).unwrap_or(""),
+                            "worker_id": perm_data.get("worker_id").and_then(|v| v.as_str()).unwrap_or(""),
+                            "tool_name": perm_data.get("tool_name").and_then(|v| v.as_str()).unwrap_or(""),
+                            "tool_input": perm_data.get("tool_input").cloned().unwrap_or(serde_json::json!({})),
+                            "permission_suggestions": perm_data.get("permission_suggestions").cloned().unwrap_or(serde_json::json!([])),
+                        }));
+                    } else {
+                        let _ = app_handle.emit_all("scheduler-output", serde_json::json!({
+                            "traceId": trace_id_clone,
+                            "type": "log",
+                            "prefix": prefix,
+                            "message": message,
+                            "level": level,
+                        }));
+                    }
                 } else if let Some(rest) = line.strip_prefix("__INJECT_RESULT__:") {
                     // 补充信息注入结果：解析 JSON，按 request_id 匹配 pending channel
                     let parsed: serde_json::Value = serde_json::from_str(rest).unwrap_or_default();
@@ -534,6 +548,7 @@ pub fn get_system_config() -> SystemConfig {
         max_agents: stored.max_agents,
         run_mode: stored.run_mode,
         permission_mode: env.get("PERMISSION_MODE").cloned().unwrap_or_else(|| stored.permission_mode.clone()),
+        permission_timeout_ms: env.get("PERMISSION_TIMEOUT_MS").and_then(|v| v.parse().ok()).unwrap_or(stored.permission_timeout_ms),
     }
 }
 
@@ -546,6 +561,7 @@ pub fn save_system_config(config: SystemConfig, state: State<AppState>) -> TaskR
     env_updates.insert("ANTHROPIC_BASE_URL".to_string(), config.api_base.clone());
     env_updates.insert("ANTHROPIC_MODEL".to_string(), config.model_name.clone());
     env_updates.insert("PERMISSION_MODE".to_string(), config.permission_mode.clone());
+    env_updates.insert("PERMISSION_TIMEOUT_MS".to_string(), format!("{}", config.permission_timeout_ms));
 
     if let Err(e) = utils::update_env_file(&env_target, &env_updates) {
         return TaskResult::err(&e);
@@ -562,10 +578,14 @@ pub fn save_system_config(config: SystemConfig, state: State<AppState>) -> TaskR
     match serde_json::to_string_pretty(&to_store) {
         Ok(json) => match fs::write(&cfg_path, json) {
             Ok(_) => {
-                // 3. 更新 AppState 中的 permission_mode
+                // 3. 更新 AppState 中的权限相关字段
                 {
                     let mut pm = state.permission_mode.lock().unwrap();
                     *pm = to_store.permission_mode.clone();
+                }
+                {
+                    let mut pt = state.permission_timeout_ms.lock().unwrap();
+                    *pt = to_store.permission_timeout_ms;
                 }
                 utils::log_info(&format!("[Tauri] 配置已保存: .env + {}", cfg_path.display()));
                 TaskResult::ok_with_data(
@@ -735,6 +755,52 @@ pub async fn inject_info(
             Ok(TaskResult::err("注入超时（30秒未收到响应）"))
         }
     }
+}
+
+// ==================== 权限审批响应 ====================
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PermissionResponseRequest {
+    pub decision: String,  // "allow" 或 "deny"
+    pub message: Option<String>,  // deny 时的拒绝原因
+}
+
+/// 前端用户审批后调用：将决策通过 stdin 写入 scheduler 进程
+#[tauri::command]
+pub async fn permission_response(
+    request: PermissionResponseRequest,
+    state: State<'_, AppState>,
+) -> Result<TaskResult, String> {
+    let decision_json = if request.decision == "allow" {
+        serde_json::json!({
+            "behavior": "allow",
+            "updatedInput": {},
+        })
+    } else {
+        serde_json::json!({
+            "behavior": "deny",
+            "message": request.message.unwrap_or_else(|| "用户拒绝".to_string()),
+            "interrupt": false,
+        })
+    };
+
+    let cmd_line = format!("__PERM_RESP__:{}\n", decision_json);
+
+    {
+        let mut stdin_lock = state.scheduler_stdin.lock().await;
+        match stdin_lock.as_mut() {
+            Some(stdin) => {
+                if let Err(e) = stdin.write_all(cmd_line.as_bytes()).await {
+                    return Ok(TaskResult::err(&format!("写入 scheduler stdin 失败: {}", e)));
+                }
+            }
+            None => {
+                return Ok(TaskResult::err("当前没有运行中的任务"));
+            }
+        }
+    }
+
+    Ok(TaskResult::ok("审批决策已发送"))
 }
 
 // ==================== 数据库日志查询 ====================

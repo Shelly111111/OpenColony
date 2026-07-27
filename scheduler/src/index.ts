@@ -82,6 +82,7 @@ async function main() {
  *
  * 通信协议：
  * - Tauri 写入: __INJECT__:<json>\n
+ * - Tauri 写入: __PERM_RESP__:<json>\n  （权限审批响应）
  * - scheduler 输出: __INJECT_RESULT__:<json>\n
  *
  * json 字段: request_id, trace_id, content, target_worker_type, route, urgent
@@ -93,6 +94,23 @@ function startStdinListener(scheduler: MasterScheduler): { stop: () => void } {
   });
 
   rl.on('line', async (line: string) => {
+    // 权限审批响应
+    const permPrefix = '__PERM_RESP__:';
+    if (line.startsWith(permPrefix)) {
+      const jsonStr = line.slice(permPrefix.length);
+      try {
+        const decision = JSON.parse(jsonStr);
+        // 调用 sdk-client 暴露的全局 resolve 函数
+        if (typeof (globalThis as any).__resolvePermission === 'function') {
+          (globalThis as any).__resolvePermission(decision);
+        }
+      } catch {
+        log({ message: `stdin 权限审批响应 JSON 解析失败: ${jsonStr}`, level: 'error', silent: true });
+      }
+      return;
+    }
+
+    // 补充信息注入
     const prefix = '__INJECT__:';
     if (!line.startsWith(prefix)) return;
 

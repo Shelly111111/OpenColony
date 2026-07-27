@@ -13,6 +13,8 @@ async function loadSettings() {
     document.getElementById('maxAgents').value = config.max_agents || 8;
     document.getElementById('runModeCfg').value = config.run_mode || 'sdk';
     document.getElementById('permissionMode').value = config.permission_mode || 'ask';
+    document.getElementById('permissionTimeout').value = config.permission_timeout_ms || 120;
+    window.permissionTimeoutMs = (config.permission_timeout_ms || 120) * 1000;
 
     document.getElementById('runModeSelect').value = config.run_mode || 'sdk';
     document.getElementById('permissionModeSelect').value = config.permission_mode || 'ask';
@@ -33,6 +35,7 @@ async function saveSettings() {
     max_agents: parseInt(document.getElementById('maxAgents').value) || 8,
     run_mode: document.getElementById('runModeCfg').value,
     permission_mode: document.getElementById('permissionMode').value,
+    permission_timeout_ms: parseInt(document.getElementById('permissionTimeout').value) || 120,
   };
 
   try {

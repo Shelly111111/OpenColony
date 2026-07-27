@@ -1657,3 +1657,99 @@ body {
   }
 }
 
+/* ==================== 权限审批 Toast ==================== */
+
+.permission-toast {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  z-index: 10000;
+  min-width: 360px;
+  max-width: 480px;
+  background: #1e293b;
+  border: 2px solid #f59e0b;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  animation: toastSlideIn 0.3s ease;
+  overflow: hidden;
+}
+
+.perm-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #334155;
+  border-bottom: 1px solid #475569;
+}
+
+.perm-icon { font-size: 18px; }
+
+.perm-title {
+  font-weight: 700;
+  color: #f59e0b;
+  font-size: 14px;
+  flex: 1;
+}
+
+.perm-worker {
+  font-size: 11px;
+  color: #94a3b8;
+  font-family: monospace;
+}
+
+.perm-body {
+  padding: 12px 14px;
+}
+
+.perm-tool {
+  font-size: 13px;
+  color: #e2e8f0;
+  margin-bottom: 6px;
+}
+
+.perm-tool strong { color: #60a5fa; }
+
+.perm-input {
+  background: #0f172a;
+  color: #a5b4fc;
+  font-size: 11px;
+  padding: 8px;
+  border-radius: 6px;
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+
+.perm-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid #334155;
+}
+
+.perm-allow, .perm-deny {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.perm-allow {
+  background: #059669;
+  color: #fff;
+}
+.perm-allow:hover { background: #047857; }
+
+.perm-deny {
+  background: #dc2626;
+  color: #fff;
+}
+.perm-deny:hover { background: #b91c1c; }
+

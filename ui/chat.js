@@ -256,7 +256,7 @@ async function sendMessage() {
     if (result.success) {
       // 存储当前 traceId，供补充信息注入使用
       window.currentTraceId = result.trace_id || null;
-      const permLabel = { ask: 'Ask（逐条审批）', auto: 'Auto（自动执行）', bypass: 'Bypass（跳过权限）' };
+      const permLabel = { ask: 'Ask（逐条审批）', auto: 'Auto（自动接受编辑）', bypass: 'Bypass（跳过权限）' };
       const msg = {
         type: 'master',
         content: `✅ ${result.message}\n\n📝 Trace ID: ${result.trace_id || 'N/A'}\n🔐 权限模式: ${permLabel[permissionMode] || permissionMode}\n${result.data || ''}`,
@@ -400,3 +400,77 @@ function handleChatInputKey(event) {
     sendMessage();
   }
 }
+
+// ==================== 权限审批 Toast ====================
+
+/**
+ * 显示权限审批 Toast：展示工具名+输入，允许/拒绝按钮
+ */
+function showPermissionToast(data) {
+  const { request_id, worker_id, tool_name, tool_input } = data;
+
+  // 截断过长的 tool_input
+  let inputStr = '';
+  try {
+    inputStr = JSON.stringify(tool_input, null, 2);
+    if (inputStr.length > 300) inputStr = inputStr.slice(0, 300) + '...';
+  } catch { inputStr = String(tool_input); }
+
+  const toast = document.createElement('div');
+  toast.className = 'permission-toast';
+  toast.innerHTML = `
+    <div class="perm-header">
+      <span class="perm-icon">🔐</span>
+      <span class="perm-title">权限审批请求</span>
+      <span class="perm-worker">Worker: ${escapeHtml(worker_id.slice(0, 8))}</span>
+    </div>
+    <div class="perm-body">
+      <div class="perm-tool"><strong>工具:</strong> ${escapeHtml(tool_name)}</div>
+      <pre class="perm-input">${escapeHtml(inputStr)}</pre>
+    </div>
+    <div class="perm-actions">
+      <button class="perm-allow" onclick="resolvePermission('${request_id}', 'allow')">✅ 允许</button>
+      <button class="perm-deny" onclick="resolvePermission('${request_id}', 'deny')">❌ 拒绝</button>
+    </div>
+  `;
+  document.body.appendChild(toast);
+
+  // 超时后自动拒绝（使用配置的超时秒数）
+  const timeoutSec = window.permissionTimeoutMs ? Math.floor(window.permissionTimeoutMs / 1000) : 120;
+  setTimeout(() => {
+    if (document.body.contains(toast)) {
+      resolvePermission(request_id, 'deny');
+      toast.remove();
+    }
+  }, window.permissionTimeoutMs || 120000);
+}
+
+/**
+ * 用户审批决策：调用 Tauri 命令发送到 scheduler
+ */
+async function resolvePermission(requestId, decision) {
+  try {
+    await invoke('permission_response', {
+      request: { decision, message: decision === 'deny' ? '用户拒绝' : undefined }
+    });
+  } catch (e) {
+    showToast(`审批响应失败: ${e}`, 'error');
+  }
+  // 移除对应的 toast
+  document.querySelectorAll('.permission-toast').forEach(t => t.remove());
+}
+
+/**
+ * 监听 Tauri 的 permission-request 事件
+ */
+function initPermissionListener() {
+  if (typeof window.__TAURI__ !== 'undefined') {
+    const { listen } = window.__TAURI__.event;
+    listen('permission-request', (event) => {
+      showPermissionToast(event.payload);
+    });
+  }
+}
+
+// 初始化权限监听
+initPermissionListener();

@@ -18,6 +18,8 @@ pub struct AppState {
     pub pending_injects: Mutex<HashMap<String, oneshot::Sender<serde_json::Value>>>,
     /// 当前权限模式（auto / ask / bypass）
     pub permission_mode: Mutex<String>,
+    /// 权限审批超时（秒）
+    pub permission_timeout_ms: Mutex<i32>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -143,6 +145,8 @@ pub struct SystemConfig {
     pub run_mode: String,
     #[serde(default = "default_permission_mode")]
     pub permission_mode: String,
+    #[serde(default = "default_permission_timeout_ms")]
+    pub permission_timeout_ms: i32,
 }
 
 fn default_run_mode() -> String {
@@ -151,6 +155,10 @@ fn default_run_mode() -> String {
 
 fn default_permission_mode() -> String {
     "ask".to_string()
+}
+
+fn default_permission_timeout_ms() -> i32 {
+    120
 }
 
 impl Default for SystemConfig {
@@ -165,6 +173,7 @@ impl Default for SystemConfig {
             max_agents: 8,
             run_mode: "sdk".to_string(),
             permission_mode: "ask".to_string(),
+            permission_timeout_ms: 120,
         }
     }
 }

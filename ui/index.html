@@ -277,10 +277,15 @@
                   <label>权限模式</label>
                   <select id="permissionMode" class="form-select">
                     <option value="ask">Ask模式（逐条审批，推荐）</option>
-                    <option value="auto">Auto模式（高置信度自动执行）</option>
+                    <option value="auto">Auto模式（自动接受编辑，命令需审批）</option>
                     <option value="bypass">Bypass模式（跳过权限检查）</option>
                   </select>
-                  <span class="form-hint">Ask: 每个操作需审批; Auto: 高置信度自动执行; Bypass: 开发调试用</span>
+                  <span class="form-hint">Ask: 每个操作需审批; Auto: 自动接受编辑; Bypass: 开发调试用</span>
+                </div>
+                <div class="form-group">
+                  <label>审批超时(秒)</label>
+                  <input id="permissionTimeout" type="number" class="form-input" min="10" max="600" value="120" step="10">
+                  <span class="form-hint">前端审批弹窗等待时长，超时自动拒绝</span>
                 </div>
               </div>
             </div>

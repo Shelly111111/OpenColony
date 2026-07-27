@@ -15,6 +15,7 @@ export interface TaskExecutionSettings {
 export interface AppSettings {
   taskExecution: TaskExecutionSettings;
   permissionMode: PermissionMode;
+  permissionTimeoutMs: number; // 权限审批等待超时（毫秒）
 }
 
 const defaultSettings: AppSettings = {
@@ -24,6 +25,7 @@ const defaultSettings: AppSettings = {
     taskTimeout: 600000,
   },
   permissionMode: PermissionMode.ASK,
+  permissionTimeoutMs: 120000,
 };
 
 const SETTINGS_FILE_PATH = path.resolve(__dirname, '../../config/settings.json');
@@ -66,6 +68,13 @@ export function loadSettings(
     const mode = process.env.PERMISSION_MODE.toLowerCase();
     if (mode === 'auto' || mode === 'ask' || mode === 'bypass') {
       settings.permissionMode = mode as PermissionMode;
+    }
+  }
+
+  if (process.env.PERMISSION_TIMEOUT_MS !== undefined) {
+    const ms = parseInt(process.env.PERMISSION_TIMEOUT_MS, 10);
+    if (ms > 0) {
+      settings.permissionTimeoutMs = ms;
     }
   }
 

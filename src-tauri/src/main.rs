@@ -19,6 +19,7 @@ fn main() {
         scheduler_stdin: tokio::sync::Mutex::new(None),
         pending_injects: Mutex::new(HashMap::new()),
         permission_mode: Mutex::new("ask".to_string()),
+        permission_timeout_ms: Mutex::new(120),
     };
 
     tauri::Builder::default()
@@ -41,6 +42,7 @@ fn main() {
             commands::get_log_trace_list,
             commands::get_logs_by_trace_id,
             commands::inject_info,
+            commands::permission_response,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
