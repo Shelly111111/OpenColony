@@ -8,7 +8,7 @@ import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { log, LOG_DIR } from '../utils/logger';
 import { ClaudeLink } from '../../scheduler/src/claude-link';
-import { MessagePriority } from '../../scheduler/src/types';
+import { MessagePriority, PermissionMode } from '../../scheduler/src/types';
 import { z } from "zod";
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -17,16 +17,38 @@ export class ClaudeSDKClient {
   private model: string;
   private workerId: string;
   private claudeLink: ClaudeLink;
+  private permissionMode: PermissionMode;
 
   constructor(workerId: string = 'unknown-worker') {
     this.model = process.env.ANTHROPIC_MODEL || 'claude-opus-4-6';
     this.workerId = workerId;
+    this.permissionMode = PermissionMode.ASK;
     this.claudeLink = ClaudeLink.getInstance();
-    log({ logFile: undefined, message: `[ClaudeSDKClient] Worker: ${workerId}, 使用模型: ${this.model}` });
+    log({ logFile: undefined, message: `[ClaudeSDKClient] Worker: ${workerId}, 使用模型: ${this.model}, 权限模式: ${this.permissionMode}`, silent: true });
   }
 
   public setWorkerId(workerId: string): void {
     this.workerId = workerId;
+  }
+
+  public setPermissionMode(mode: PermissionMode): void {
+    this.permissionMode = mode;
+  }
+
+  /**
+   * 将 PermissionMode 映射为 Claude Agent SDK 的 permissionMode 参数
+   */
+  private getSdkPermissionMode(): string {
+    switch (this.permissionMode) {
+      case PermissionMode.AUTO:
+        return 'auto';
+      case PermissionMode.ASK:
+        return 'default';
+      case PermissionMode.BYPASS:
+        return 'bypassPermissions';
+      default:
+        return 'default';
+    }
   }
 
   private createCollaborationMcpServer() {
@@ -242,6 +264,9 @@ export class ClaudeSDKClient {
         }
       }
 
+      const sdkPermissionMode = this.getSdkPermissionMode();
+      const isBypass = this.permissionMode === PermissionMode.BYPASS;
+
       const queryStream = query({
         prompt: generateMessages(),
         options: {
@@ -250,8 +275,8 @@ export class ClaudeSDKClient {
           mcpServers: {
             "worker-collaboration": collaborationServer
           },
-          permissionMode: "bypassPermissions",
-          allowDangerouslySkipPermissions: true,
+          permissionMode: sdkPermissionMode,
+          allowDangerouslySkipPermissions: isBypass,
           model: this.model,
           maxTurns: 50,
           includePartialMessages: true,

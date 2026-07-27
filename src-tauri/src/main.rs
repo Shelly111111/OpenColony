@@ -18,6 +18,7 @@ fn main() {
         session_id: Mutex::new(format!("#{}", chrono::Local::now().format("%H%M%S"))),
         scheduler_stdin: tokio::sync::Mutex::new(None),
         pending_injects: Mutex::new(HashMap::new()),
+        permission_mode: Mutex::new("ask".to_string()),
     };
 
     tauri::Builder::default()

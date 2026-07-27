@@ -13,6 +13,7 @@ import { createPtyBackend } from "./backends/pty-selector";
 import { ensureLogDir, createLogFile, log, formatOutput, LOG_DIR } from "./utils/logger";
 import { getDefaultShell } from "./utils/git-bash";
 import { ClaudeSDKClient, getSDKClient } from "./backends/sdk-client";
+import { PermissionMode } from "../scheduler/src/types";
 
 // 屏幕日志文件后缀
 const SCREEN_LOG_SUFFIX = ".screen.log";
@@ -63,6 +64,15 @@ export class ClaudeUnifiedPtyManager {
     this.workerId = workerId;
     if (this.sdkClient) {
       this.sdkClient.setWorkerId(workerId);
+    }
+  }
+
+  /**
+   * 设置权限模式（由 scheduler 的 worker-manager 传入）
+   */
+  setPermissionMode(mode: PermissionMode): void {
+    if (this.sdkClient) {
+      this.sdkClient.setPermissionMode(mode);
     }
   }
 

@@ -16,6 +16,8 @@ pub struct AppState {
     pub scheduler_stdin: TokioMutex<Option<ChildStdin>>,
     /// 待响应的注入请求（request_id -> oneshot Sender）
     pub pending_injects: Mutex<HashMap<String, oneshot::Sender<serde_json::Value>>>,
+    /// 当前权限模式（auto / ask / bypass）
+    pub permission_mode: Mutex<String>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -139,10 +141,16 @@ pub struct SystemConfig {
     pub max_agents: i32,
     #[serde(default = "default_run_mode")]
     pub run_mode: String,
+    #[serde(default = "default_permission_mode")]
+    pub permission_mode: String,
 }
 
 fn default_run_mode() -> String {
     "sdk".to_string()
+}
+
+fn default_permission_mode() -> String {
+    "ask".to_string()
 }
 
 impl Default for SystemConfig {
@@ -156,6 +164,7 @@ impl Default for SystemConfig {
             claude_url: ".claude".to_string(),
             max_agents: 8,
             run_mode: "sdk".to_string(),
+            permission_mode: "ask".to_string(),
         }
     }
 }

@@ -190,6 +190,10 @@ export class WorkerManager {
       // 设置真实 Worker UUID（而非 session 编号），确保 ClaudeLink 收件箱匹配
       manager.setWorkerId(worker.id);
 
+      // 设置权限模式（从配置中读取，默认 Ask）
+      const permissionMode = this.config.permissionMode || 'ask';
+      manager.setPermissionMode(permissionMode);
+
       // 格式化命令以适应PTY输入（将多行转换为单行）
       const command = this.formatCommandForPty(subTask.command);
       this.writeLog(logFile, `[${mode.toUpperCase()}] 执行命令: ${command.substring(0, 200)}...`, traceId, taskId, workerId);

@@ -60,6 +60,7 @@ pub async fn submit_task(
         .arg(&mode)
         .arg(&task)
         .env("LOG_FORMAT", "json")
+        .env("PERMISSION_MODE", &state.permission_mode.lock().unwrap().clone())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::piped());
@@ -532,23 +533,25 @@ pub fn get_system_config() -> SystemConfig {
         claude_url: stored.claude_url,
         max_agents: stored.max_agents,
         run_mode: stored.run_mode,
+        permission_mode: env.get("PERMISSION_MODE").cloned().unwrap_or_else(|| stored.permission_mode.clone()),
     }
 }
 
 #[tauri::command]
-pub fn save_system_config(config: SystemConfig) -> TaskResult {
+pub fn save_system_config(config: SystemConfig, state: State<AppState>) -> TaskResult {
     // 1. 写入 .env 文件（api_key, api_base, model_name）
     let env_target = paths::env_write_path();
     let mut env_updates = std::collections::HashMap::new();
     env_updates.insert("ANTHROPIC_API_KEY".to_string(), config.api_key.clone());
     env_updates.insert("ANTHROPIC_BASE_URL".to_string(), config.api_base.clone());
     env_updates.insert("ANTHROPIC_MODEL".to_string(), config.model_name.clone());
+    env_updates.insert("PERMISSION_MODE".to_string(), config.permission_mode.clone());
 
     if let Err(e) = utils::update_env_file(&env_target, &env_updates) {
         return TaskResult::err(&e);
     }
 
-    // 2. 写入 config.json（claude_path, claude_url, max_agents, run_mode）
+    // 2. 写入 config.json（claude_path, claude_url, max_agents, run_mode, permission_mode）
     utils::ensure_app_data_dir();
     let cfg_path = paths::config_file_path();
     let to_store = SystemConfig {
@@ -559,6 +562,11 @@ pub fn save_system_config(config: SystemConfig) -> TaskResult {
     match serde_json::to_string_pretty(&to_store) {
         Ok(json) => match fs::write(&cfg_path, json) {
             Ok(_) => {
+                // 3. 更新 AppState 中的 permission_mode
+                {
+                    let mut pm = state.permission_mode.lock().unwrap();
+                    *pm = to_store.permission_mode.clone();
+                }
                 utils::log_info(&format!("[Tauri] 配置已保存: .env + {}", cfg_path.display()));
                 TaskResult::ok_with_data(
                     "配置保存成功",

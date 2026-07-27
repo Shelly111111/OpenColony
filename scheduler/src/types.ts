@@ -170,6 +170,7 @@ export interface SchedulerConfig {
   enableReview: boolean;
   workerTypes: string[];
   runMode?: 'sdk' | 'pty'; // 运行模式：sdk（默认）或 pty
+  permissionMode?: PermissionMode; // 权限模式：auto/ask/bypass，默认 ask
 }
 
 /**
@@ -190,6 +191,17 @@ export interface ArbitrationResult {
   conflicts?: string[];
   requiresUserInput: boolean;
   userPrompt?: string;
+}
+
+// ==================== 受控执行模式相关类型 ====================
+
+/**
+ * 权限模式
+ */
+export enum PermissionMode {
+  AUTO = "auto",     // Auto模式：高置信度操作自动执行，低置信度需批准
+  ASK = "ask",       // Ask模式：每个写入/执行操作弹出审批Toast（默认）
+  BYPASS = "bypass"  // 跳过所有权限检查（仅限开发/调试）
 }
 
 // ==================== ClaudeLink 通信相关类型 ====================

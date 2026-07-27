@@ -12,9 +12,11 @@ async function loadSettings() {
     document.getElementById('claudeUrl').value = config.claude_url || '.claude';
     document.getElementById('maxAgents').value = config.max_agents || 8;
     document.getElementById('runModeCfg').value = config.run_mode || 'sdk';
+    document.getElementById('permissionMode').value = config.permission_mode || 'ask';
 
     document.getElementById('runModeSelect').value = config.run_mode || 'sdk';
-    document.getElementById('runModeDisplay').textContent = `模式: ${(config.run_mode || 'sdk').toUpperCase()}`;
+    document.getElementById('permissionModeSelect').value = config.permission_mode || 'ask';
+    document.getElementById('runModeDisplay').textContent = `模式: ${(config.run_mode || 'sdk').toUpperCase()} | 权限: ${(config.permission_mode || 'ask').toUpperCase()}`;
   } catch (e) {
     showToast('加载设置失败: ' + e, 'error');
   }
@@ -30,6 +32,7 @@ async function saveSettings() {
     claude_url: document.getElementById('claudeUrl').value,
     max_agents: parseInt(document.getElementById('maxAgents').value) || 8,
     run_mode: document.getElementById('runModeCfg').value,
+    permission_mode: document.getElementById('permissionMode').value,
   };
 
   try {
@@ -38,7 +41,8 @@ async function saveSettings() {
       alert(`✅ ${result.message}\n路径: ${result.data || ''}`);
       systemConfig = config;
       document.getElementById('runModeSelect').value = config.run_mode;
-      document.getElementById('runModeDisplay').textContent = `模式: ${config.run_mode.toUpperCase()}`;
+      document.getElementById('permissionModeSelect').value = config.permission_mode;
+      document.getElementById('runModeDisplay').textContent = `模式: ${config.run_mode.toUpperCase()} | 权限: ${config.permission_mode.toUpperCase()}`;
     } else {
       alert(`❌ 保存失败: ${result.message}`);
     }

@@ -4,6 +4,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { PermissionMode } from "../types";
 
 export interface TaskExecutionSettings {
   sameLayerAsync: boolean;
@@ -13,6 +14,7 @@ export interface TaskExecutionSettings {
 
 export interface AppSettings {
   taskExecution: TaskExecutionSettings;
+  permissionMode: PermissionMode;
 }
 
 const defaultSettings: AppSettings = {
@@ -21,6 +23,7 @@ const defaultSettings: AppSettings = {
     maxConcurrency: 5,
     taskTimeout: 600000,
   },
+  permissionMode: PermissionMode.ASK,
 };
 
 const SETTINGS_FILE_PATH = path.resolve(__dirname, '../../config/settings.json');
@@ -57,6 +60,13 @@ export function loadSettings(
       process.env.MAX_CONCURRENCY,
       10
     );
+  }
+
+  if (process.env.PERMISSION_MODE !== undefined) {
+    const mode = process.env.PERMISSION_MODE.toLowerCase();
+    if (mode === 'auto' || mode === 'ask' || mode === 'bypass') {
+      settings.permissionMode = mode as PermissionMode;
+    }
   }
 
   if (overrides) {

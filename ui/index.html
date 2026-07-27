@@ -50,7 +50,7 @@
           <div class="footer-stat">Agent池: <span id="agentCount">0</span> 个</div>
           <div class="footer-stat">任务: <span id="taskQueue">0</span></div>
           <div class="footer-stat">会话: <span id="sessionId">#000000</span></div>
-          <div class="footer-stat" id="runModeDisplay">模式: SDK</div>
+          <div class="footer-stat" id="runModeDisplay">模式: SDK | 权限: ASK</div>
         </div>
       </aside>
 
@@ -80,6 +80,11 @@
                   <select id="runModeSelect" class="mode-select" title="运行模式">
                     <option value="sdk">SDK模式</option>
                     <option value="pty">PTY模式</option>
+                  </select>
+                  <select id="permissionModeSelect" class="mode-select" title="权限模式">
+                    <option value="ask">Ask</option>
+                    <option value="auto">Auto</option>
+                    <option value="bypass">Bypass</option>
                   </select>
                   <button class="action-btn" title="清空对话" onclick="clearMessages()">🗑</button>
                   <button class="send-btn" onclick="sendMessage()">➤</button>
@@ -267,6 +272,15 @@
                     <option value="sdk">SDK模式（推荐）</option>
                     <option value="pty">PTY模式</option>
                   </select>
+                </div>
+                <div class="form-group">
+                  <label>权限模式</label>
+                  <select id="permissionMode" class="form-select">
+                    <option value="ask">Ask模式（逐条审批，推荐）</option>
+                    <option value="auto">Auto模式（高置信度自动执行）</option>
+                    <option value="bypass">Bypass模式（跳过权限检查）</option>
+                  </select>
+                  <span class="form-hint">Ask: 每个操作需审批; Auto: 高置信度自动执行; Bypass: 开发调试用</span>
                 </div>
               </div>
             </div>

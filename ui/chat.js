@@ -233,6 +233,7 @@ async function sendMessage() {
   if (!text) return;
 
   const mode = document.getElementById('runModeSelect').value;
+  const permissionMode = document.getElementById('permissionModeSelect')?.value || 'ask';
   const parsed = parseInput(text, isTaskRunning());
 
   if (!chatMessages[currentChatTab]) chatMessages[currentChatTab] = [];
@@ -255,9 +256,10 @@ async function sendMessage() {
     if (result.success) {
       // 存储当前 traceId，供补充信息注入使用
       window.currentTraceId = result.trace_id || null;
+      const permLabel = { ask: 'Ask（逐条审批）', auto: 'Auto（自动执行）', bypass: 'Bypass（跳过权限）' };
       const msg = {
         type: 'master',
-        content: `✅ ${result.message}\n\n📝 Trace ID: ${result.trace_id || 'N/A'}\n${result.data || ''}`,
+        content: `✅ ${result.message}\n\n📝 Trace ID: ${result.trace_id || 'N/A'}\n🔐 权限模式: ${permLabel[permissionMode] || permissionMode}\n${result.data || ''}`,
         closed: true
       };
       chatMessages[currentChatTab].push(msg);

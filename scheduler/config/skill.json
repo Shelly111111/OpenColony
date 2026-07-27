@@ -1,4 +1,557 @@
 {
   "skills": [
+    {
+      "id": "superpowers",
+      "name": "superpowers v6.1.0",
+      "description": "安装路径: D:\\Users\\gezh.zhang\\.claude\\plugins\\cache\\claude-plugins-official\\superpowers\\6.1.0",
+      "category": "插件",
+      "version": "6.1.0",
+      "status": "活跃",
+      "icon": "🔌",
+      "sub_skills": [
+        {
+          "id": "brainstorming",
+          "name": "brainstorming",
+          "description": "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation.",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "dispatching-parallel-agents",
+          "name": "dispatching-parallel-agents",
+          "description": "Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "executing-plans",
+          "name": "executing-plans",
+          "description": "Use when you have a written implementation plan to execute in a separate session with review checkpoints",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "finishing-a-development-branch",
+          "name": "finishing-a-development-branch",
+          "description": "Use when implementation is complete, all tests pass, and you need to decide how to integrate the work - guides completion of development work by presenting structured options for merge, PR, or cleanup",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "receiving-code-review",
+          "name": "receiving-code-review",
+          "description": "Use when receiving code review feedback, before implementing suggestions, especially if feedback seems unclear or technically questionable - requires technical rigor and verification, not performative agreement or blind implementation",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "requesting-code-review",
+          "name": "requesting-code-review",
+          "description": "Use when completing tasks, implementing major features, or before merging to verify work meets requirements",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "subagent-driven-development",
+          "name": "subagent-driven-development",
+          "description": "Use when executing implementation plans with independent tasks in the current session",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "systematic-debugging",
+          "name": "systematic-debugging",
+          "description": "Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "test-driven-development",
+          "name": "test-driven-development",
+          "description": "Use when implementing any feature or bugfix, before writing implementation code",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "using-git-worktrees",
+          "name": "using-git-worktrees",
+          "description": "Use when starting feature work that needs isolation from current workspace or before executing implementation plans - ensures an isolated workspace exists via native tools or git worktree fallback",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "using-superpowers",
+          "name": "using-superpowers",
+          "description": "Use when starting any conversation - establishes how to find and use skills, requiring skill invocation before ANY response including clarifying questions",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "verification-before-completion",
+          "name": "verification-before-completion",
+          "description": "Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "writing-plans",
+          "name": "writing-plans",
+          "description": "Use when you have a spec or requirements for a multi-step task, before touching code",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "writing-skills",
+          "name": "writing-skills",
+          "description": "Use when creating new skills, editing existing skills, or verifying skills work before deployment",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        }
+      ]
+    },
+    {
+      "id": "auto-coding",
+      "name": "auto-coding v1.1.75",
+      "description": "安装路径: D:\\Users\\gezh.zhang\\.claude\\plugins\\cache\\flight-claude-marketplace\\auto-coding\\1.1.75",
+      "category": "插件",
+      "version": "1.1.75",
+      "status": "活跃",
+      "icon": "🔌",
+      "sub_skills": [
+        {
+          "id": "ai-case-generation",
+          "name": "ai-case-generation",
+          "description": "当用户输入“自动生成测试用例”后，按照流程进行自动的需求开发",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "ai-coding",
+          "name": "ai-coding",
+          "description": "当用户输入“自动coding”后，按照流程进行自动的需求开发",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "ai-deployment",
+          "name": "ai-deployment",
+          "description": "当用户输入“自动部署”后，按照流程进行自动的需求开发",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "ai-task-generation",
+          "name": "ai-task-generation",
+          "description": "当用户输入“自动生成task”后，按照流程进行自动的需求开发，处理需求文本、飞书文档",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "ai-testing",
+          "name": "ai-testing",
+          "description": "当用户输入“自动测试”后，按照流程进行自动的需求开发",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "auto-coding",
+          "name": "auto-coding",
+          "description": "当用户输入“开启自动编程”后，按照流程进行自动的需求开发",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "qsso",
+          "name": "qsso",
+          "description": "用于单点登录指定的系统（只限于*.qunar.com的域名），并在用户电脑上保存登录的Cookies",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        }
+      ]
+    },
+    {
+      "id": "qsuperpowers",
+      "name": "qsuperpowers v0.1.12",
+      "description": "安装路径: D:\\Users\\gezh.zhang\\.claude\\plugins\\cache\\flight-claude-marketplace\\qsuperpowers\\0.1.12",
+      "category": "插件",
+      "version": "0.1.12",
+      "status": "活跃",
+      "icon": "🔌",
+      "sub_skills": [
+        {
+          "id": "ai-checklist",
+          "name": "ai-checklist",
+          "description": "AI生成测试用例并同步至PMO - ai-coding和ai-deployment之间的可选步骤",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "ai-coding",
+          "name": "ai-coding",
+          "description": "执行实现计划并完成代码开发 - auto-coding 工作流的第二阶段",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "ai-deployment",
+          "name": "ai-deployment",
+          "description": "自动提交代码并部署到Noah平台 - auto-coding 工作流的第三阶段",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "ai-task-generation",
+          "name": "ai-task-generation",
+          "description": "将用户输入的需求转化为可执行的实现计划 - auto-coding 工作流的第一阶段，整合 brainstorming 和 writing-plans",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "ai-testing",
+          "name": "ai-testing",
+          "description": "自动化测试验证部署后的代码 - auto-coding 工作流的第四阶段",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "auto-coding",
+          "name": "auto-coding",
+          "description": "当用户输入\"开启自动编程\"后，按照流程进行自动的需求开发 - 这是 qsuperpowers 的入口技能",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "automate",
+          "name": "automate",
+          "description": "灭霸测试和分析的自动化技能",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "brainstorming",
+          "name": "brainstorming",
+          "description": "在进行任何创造性工作之前必须使用此技能 - 创建功能、构建组件、添加功能或修改行为。在实现之前探索用户意图、需求和设计。",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "checklist-feishu-sync",
+          "name": "checklist-feishu-sync",
+          "description": "基于 auto-coding/outputs/prd-feature-test-cases.display.json 调用 ChecklistReturnURL 工作流获取Checklist链接，并将结果写入飞书多维表格。适用于”导入Checklist平台””回填飞书多维表格””同步测试用例URL”等请求。",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "dispatching-parallel-agents",
+          "name": "dispatching-parallel-agents",
+          "description": "当面临 2 个以上可以独立处理、无共享状态或顺序依赖的任务时使用",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "executing-plans",
+          "name": "executing-plans",
+          "description": "当你有书面实现计划需要在单独会话中执行并有审查检查点时使用",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "finishing-a-development-branch",
+          "name": "finishing-a-development-branch",
+          "description": "当实现完成、所有测试通过、需要决定如何集成工作时使用 — 通过展示合并、PR 或清理的结构化选项来指导开发工作的完成",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "lark-document",
+          "name": "lark-document",
+          "description": "当用户提供飞书文档链接时使用此技能，将飞书文档转换为 Markdown 格式并保存到项目目录",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "local-cr-review",
+          "name": "local-cr-review",
+          "description": "本地代码评审技能。用户主动触发时使用（如说\"cr代码\"、\"代码评审\"、\"本地cr\"等），对 git diff 进行 AI 代码审查，支持与 master 对比或与暂存区对比，输出友好的 Markdown 报告并上传埋点数据",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "local-unit-test",
+          "name": "local-unit-test",
+          "description": "当用户输入\"AI单测\"或\"AI 单测\"后，或需要基于本地分支与 master/main 差异自动生成、执行 Java 单元测试并输出标准化测试报告，并同步到飞书多维表格时使用。",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "prd-feature-extractor",
+          "name": "prd-feature-extractor",
+          "description": "根据PRD文档自动进行功能点提取，输出结构化结果。适用于\"提取功能点\"、\"整理PRD\"、\"根据PRD生成功能清单\"等请求。",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "prd-testcase-generator",
+          "name": "prd-testcase-generator",
+          "description": "基于PRD自动生成测试用例并同步到Checklist平台。触发词：\"生成测试用例\"、\"生成checklist\"、\"测试用例生成\"。自动执行功能点提取、测试用例生成、同步到平台全流程。",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "receiving-code-review",
+          "name": "receiving-code-review",
+          "description": "在接收代码审查反馈时使用，在实施建议之前使用，特别是当反馈看起来不清楚或在技术上有疑问时 — 需要技术严谨性和验证，而非表演性同意或盲目实施",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "requesting-code-review",
+          "name": "requesting-code-review",
+          "description": "完成任务、实现主要功能或合并前使用以验证工作满足要求",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "subagent-driven-development",
+          "name": "subagent-driven-development",
+          "description": "在当前会话中执行具有独立任务的实现计划时使用",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "systematic-debugging",
+          "name": "systematic-debugging",
+          "description": "遇到任何 bug、测试失败或意外行为时使用，在提出修复方案之前",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "test-driven-development",
+          "name": "test-driven-development",
+          "description": "实现任何功能或 bug 修复时使用，在编写实现代码之前",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "using-dev-environment",
+          "name": "using-dev-environment",
+          "description": "在开始开发前设置环境 - 确定分支并切换",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "using-git-worktrees",
+          "name": "using-git-worktrees",
+          "description": "在开始需要与当前工作空间隔离的功能工作或执行实现计划之前使用 - 创建具有智能目录选择和安全验证的隔离 git worktrees",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "using-qsuperpowers",
+          "name": "using-qsuperpowers",
+          "description": "在开始任何对话时使用 - 确立如何查找和使用技能，要求在任何响应（包括澄清问题）之前调用 Skill 工具",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "verification-before-completion",
+          "name": "verification-before-completion",
+          "description": "Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "writing-plans",
+          "name": "writing-plans",
+          "description": "当你有多步骤任务的规格说明或需求时，在编写代码之前使用此技能",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        },
+        {
+          "id": "writing-skills",
+          "name": "writing-skills",
+          "description": "在创建新技能、编辑现有技能或在部署前验证技能是否有效时使用",
+          "category": "技能",
+          "version": "v1.0.0",
+          "status": "活跃",
+          "icon": "🎯",
+          "sub_skills": []
+        }
+      ]
+    },
+    {
+      "id": "api-doc-publish",
+      "name": "api-doc-publish",
+      "description": "当需要从 Spring Boot 代码生成接口文档并发布到飞书 Wiki 时使用。适用于\"生成接口文档\"、\"发布接口文档\"、\"接口文档\"、\"API文档\"、\"给前端出接口文档\"、\"Dubbo接口文档\"等请求。",
+      "category": "技能",
+      "version": "v1.0.0",
+      "status": "活跃",
+      "icon": "🎯",
+      "sub_skills": []
+    },
+    {
+      "id": "Icheck_skills",
+      "name": "Icheck_skills",
+      "description": "易查（Icheck）负责业务工单排查和咨询、线上异常和业务报警等问题排查统一入口，主要负责路由各个业务领域skill进行工单、报警等问题的排查。触发条件：业务工单、线上异常和业务报警的排查和咨询，必须先经过本技能完成路由、规划，再进入对应子skill执行排查。",
+      "category": "技能",
+      "version": "v1.0.0",
+      "status": "活跃",
+      "icon": "🎯",
+      "sub_skills": []
+    },
+    {
+      "id": "stock-analysis",
+      "name": "stock-analysis",
+      "description": "A股股票数据分析工具。当用户询问股价、走势、财务数据、股票代码，或任何与中国A股市场相关的分析问题时使用。",
+      "category": "技能",
+      "version": "v1.0.0",
+      "status": "活跃",
+      "icon": "🎯",
+      "sub_skills": []
+    }
   ]
 }
