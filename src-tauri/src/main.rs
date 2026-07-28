@@ -31,8 +31,6 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::get_system_status,
             commands::submit_task,
-            commands::get_task_list,
-            commands::get_task_log_content,
             commands::get_agent_roles,
             commands::save_agent_roles,
             commands::get_skills,
@@ -42,16 +40,10 @@ fn main() {
             commands::save_system_config,
             commands::test_model_connection,
             commands::test_claude_connection,
-            commands::get_worker_logs_root,
             commands::get_log_trace_list,
             commands::get_logs_by_trace_id,
             commands::inject_info,
             commands::permission_response,
-            commands::get_project_knowledge,
-            commands::add_project_knowledge,
-            commands::delete_project_knowledge,
-            commands::update_project_knowledge,
-            commands::get_memory_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

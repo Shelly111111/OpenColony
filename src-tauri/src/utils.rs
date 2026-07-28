@@ -87,30 +87,6 @@ pub fn update_env_file(path: &Path, updates: &HashMap<String, String>) -> Result
     fs::write(path, result).map_err(|e| format!("写入 .env 失败: {}", e))
 }
 
-/// 解析任务目录名（格式: <traceId>_<timestamp>）
-pub fn parse_task_dir_name(dir_name: &str) -> (String, String) {
-    if let Some(idx) = dir_name.rfind('_') {
-        let trace_id = dir_name[..idx].to_string();
-        let timestamp = dir_name[idx + 1..].replace('-', ":");
-        let readable = if timestamp.len() >= 15 {
-            format!(
-                "{}-{}-{} {}:{}:{}",
-                &timestamp[0..4],
-                &timestamp[4..6],
-                &timestamp[6..8],
-                &timestamp[9..11],
-                &timestamp[11..13],
-                &timestamp[13..15]
-            )
-        } else {
-            timestamp
-        };
-        (trace_id, readable)
-    } else {
-        (dir_name.to_string(), String::new())
-    }
-}
-
 /// 统计任务目录数量
 pub fn count_task_dirs() -> Option<usize> {
     fs::read_dir(paths::worker_logs_root())

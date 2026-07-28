@@ -216,24 +216,6 @@ impl Default for SystemConfig {
     }
 }
 
-// ==================== 日志 ====================
-
-#[derive(Serialize)]
-pub struct TaskLogEntry {
-    pub trace_id: String,
-    pub task_dir: String,
-    pub created_at: String,
-    pub master_log: String,
-    pub worker_logs: Vec<String>,
-}
-
-#[derive(Serialize)]
-pub struct LogContent {
-    pub file_name: String,
-    pub content: String,
-    pub size: u64,
-}
-
 // ==================== 补充信息注入 ====================
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
