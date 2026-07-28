@@ -60,10 +60,10 @@
         <section id="page-chat" class="page active">
           <h2 class="page-title">💬 主界面 · 任务提交</h2>
           <div class="chat-container">
-            <div class="chat-tabs">
+            <div class="chat-tabs" id="chatTabBar">
               <div class="chat-tab active" data-tab="master" onclick="switchChatTab('master')">
                 <span class="tab-dot master"></span>
-                <span class="tab-name">📋 Master调度</span>
+                <span class="tab-name">📋 <span class="tab-title">Master调度</span></span>
                 <span class="tab-status" id="masterTabStatus">● 就绪</span>
               </div>
               <div class="chat-tab add-tab" onclick="addNewTab()">
@@ -345,6 +345,20 @@
             </div>
           </div>
 
+          <div class="settings-card">
+            <div class="settings-card-header">
+              <h3>🧠 项目知识管理</h3>
+              <span id="memoryStats" class="test-status" style="font-size: 12px;">经验: 0 | 知识: 0 | 画像: 0</span>
+            </div>
+            <div class="settings-body">
+              <div id="knowledgeList"></div>
+              <div style="margin-top: 12px; display: flex; gap: 8px;">
+                <button class="btn-outline" onclick="addKnowledge()">➕ 添加知识</button>
+                <button class="btn-outline" onclick="loadProjectKnowledge()">🔄 刷新</button>
+              </div>
+            </div>
+          </div>
+
           <div class="info-card">
             <h3 class="info-title">📌 配置存储说明</h3>
             <ul class="info-list">
@@ -353,6 +367,7 @@
               <li>其他配置: ~/.opencolony/config.json（claude_path / claude_url / max_agents / run_mode）</li>
               <li>任务日志路径: &lt;项目根&gt;/worker-logs/&lt;traceId&gt;_&lt;timestamp&gt;/</li>
               <li>通信数据库: ~/.opencolony/messages.db（SQLite + WAL模式）</li>
+              <li>记忆数据库: ~/.opencolony/memory.db（任务经验 + 项目知识 + Worker画像）</li>
               <li>角色配置: scheduler/config/role.json</li>
               <li>技能配置: scheduler/config/skill.json</li>
             </ul>

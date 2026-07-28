@@ -105,7 +105,10 @@ async function viewTraceLogs(cardEl, traceId) {
   panel.innerHTML = `
     <div class="task-detail-header">
       <h3>📄 日志详情 <span class="log-file-name">${traceId}</span></h3>
-      <button class="btn-outline" onclick="closeTaskDetail()">✕ 关闭</button>
+      <div class="task-detail-actions">
+        <button class="btn-outline" onclick="importToNewSession('${traceId}')">📤 导入到新会话</button>
+        <button class="btn-outline" onclick="closeTaskDetail()">✕ 关闭</button>
+      </div>
     </div>
     <pre class="task-detail-content">加载中...</pre>
   `;
@@ -157,5 +160,60 @@ function formatDbTime(isoStr) {
     return new Date(isoStr).toLocaleString();
   } catch {
     return isoStr;
+  }
+}
+
+/**
+ * 导入任务日志到新会话窗口
+ * 1. 创建新会话 tab
+ * 2. 在新 tab 中展示该 traceId 的日志作为上下文
+ */
+async function importToNewSession(traceId) {
+  // 创建新会话
+  const sessionId = 'session_' + Date.now();
+  const title = `日志: ${traceId.substring(0, 12)}...`;
+  
+  // 在 chat.js 的 sessions 中注册
+  if (typeof sessions !== 'undefined') {
+    sessions[sessionId] = {
+      sessionId,
+      title,
+      messages: [],
+      traceId: null,
+    };
+
+    // 创建 tab DOM
+    const tabBar = document.getElementById('chatTabBar');
+    const addBtn = tabBar.querySelector('.add-tab');
+    const tab = document.createElement('button');
+    tab.className = 'chat-tab';
+    tab.dataset.tab = sessionId;
+    tab.innerHTML = `<span class="tab-title" ondblclick="renameTab('${sessionId}')">${title}</span><span class="tab-close" onclick="closeTab(event, '${sessionId}')">x</span>`;
+    tab.onclick = () => switchChatTab(sessionId);
+    tabBar.insertBefore(tab, addBtn);
+  }
+
+  // 切换到主界面
+  switchPage('chat');
+
+  // 切换到新 tab
+  if (typeof switchChatTab === 'function') {
+    switchChatTab(sessionId);
+  }
+
+  // 在新会话中添加一条说明消息
+  const msgs = sessions[sessionId]?.messages;
+  if (msgs) {
+    msgs.push({
+      type: 'master',
+      content: `📤 已导入日志 TraceID: ${traceId}\n你可以在新会话中继续相关任务，历史经验将被自动参考。`,
+      closed: true,
+    });
+    if (typeof appendMessageDom === 'function') {
+      appendMessageDom(msgs[msgs.length - 1]);
+    }
+    if (typeof updateMsgCount === 'function') {
+      updateMsgCount();
+    }
   }
 }

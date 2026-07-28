@@ -113,3 +113,122 @@ function updateConnectionStatus(llmOk, claudeOk) {
   parts.push(claudeOk ? '✓ Claude' : '✗ Claude');
   el.textContent = `📡 连接状态: ${parts.join(' | ')}`;
 }
+
+// ==================== 项目知识管理 ====================
+
+/** 当前选中的项目ID（默认为当前会话的 sessionId） */
+function currentProjectId() {
+  if (typeof currentSession === 'function' && currentSession()) {
+    return currentSession().sessionId || '__global__';
+  }
+  return '__global__';
+}
+
+async function loadProjectKnowledge() {
+  const projectId = currentProjectId();
+  const listEl = document.getElementById('knowledgeList');
+  if (!listEl) return;
+
+  try {
+    const items = await invoke('get_project_knowledge', { projectId });
+    if (items.length === 0) {
+      listEl.innerHTML = '<div class="empty-state">暂无项目知识，点击下方按钮添加</div>';
+    } else {
+      listEl.innerHTML = items.map(item => `
+        <div class="knowledge-item" data-id="${item.id}">
+          <div class="knowledge-item-header">
+            <span class="knowledge-category">${categoryLabel(item.category)}</span>
+            <span class="knowledge-source">${item.source === 'auto_extracted' ? '自动提取' : '手动添加'}</span>
+          </div>
+          <div class="knowledge-title">${escapeHtml(item.title)}</div>
+          <div class="knowledge-content">${escapeHtml(item.content)}</div>
+          <div class="knowledge-item-actions">
+            <button class="btn-sm" onclick="editKnowledge('${item.id}')">编辑</button>
+            <button class="btn-sm btn-danger" onclick="deleteKnowledge('${item.id}')">删除</button>
+          </div>
+        </div>
+      `).join('');
+    }
+  } catch (e) {
+    listEl.innerHTML = `<div class="empty-state error">加载失败: ${e}</div>`;
+  }
+
+  // 更新记忆统计
+  try {
+    const stats = await invoke('get_memory_stats', { projectId });
+    const statsEl = document.getElementById('memoryStats');
+    if (statsEl) {
+      statsEl.textContent = `经验: ${stats.experience_count} | 知识: ${stats.knowledge_count} | 画像: ${stats.worker_profile_count}`;
+    }
+  } catch { /* ignore */ }
+}
+
+function categoryLabel(cat) {
+  const labels = {
+    convention: '约定',
+    tech_stack: '技术栈',
+    structure: '架构',
+    preference: '偏好',
+  };
+  return labels[cat] || cat;
+}
+
+function addKnowledge() {
+  const projectId = currentProjectId();
+  const title = prompt('知识标题:');
+  if (!title) return;
+  const content = prompt('知识内容:');
+  if (!content) return;
+  const category = prompt('分类 (convention/tech_stack/structure/preference):', 'convention') || 'convention';
+
+  invoke('add_project_knowledge', {
+    request: { project_id: projectId, category, title, content }
+  }).then(result => {
+    if (result.success) {
+      showToast('知识添加成功');
+      loadProjectKnowledge();
+    } else {
+      showToast('添加失败: ' + result.message, 'error');
+    }
+  }).catch(e => showToast('添加失败: ' + e, 'error'));
+}
+
+async function editKnowledge(id) {
+  const items = await invoke('get_project_knowledge', { projectId: currentProjectId() });
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+
+  const title = prompt('知识标题:', item.title);
+  if (!title) return;
+  const content = prompt('知识内容:', item.content);
+  if (!content) return;
+
+  invoke('update_project_knowledge', {
+    request: { id, title, content }
+  }).then(result => {
+    if (result.success) {
+      showToast('更新成功');
+      loadProjectKnowledge();
+    } else {
+      showToast('更新失败: ' + result.message, 'error');
+    }
+  }).catch(e => showToast('更新失败: ' + e, 'error'));
+}
+
+function deleteKnowledge(id) {
+  if (!confirm('确定删除该知识条目？')) return;
+
+  invoke('delete_project_knowledge', { id }).then(result => {
+    if (result.success) {
+      showToast('删除成功');
+      loadProjectKnowledge();
+    } else {
+      showToast('删除失败: ' + result.message, 'error');
+    }
+  }).catch(e => showToast('删除失败: ' + e, 'error'));
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}

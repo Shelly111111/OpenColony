@@ -112,6 +112,7 @@ export interface MainTask {
   startedAt?: Date;
   completedAt?: Date;
   traceId: string;
+  projectId?: string; // 所属会话/项目ID
   logDir?: string; // 日志目录路径
   masterLogFile?: string; // Master + PlanExecutor 合并日志文件路径
 }

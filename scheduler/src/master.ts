@@ -33,6 +33,7 @@ import { ClaudeLink } from "./claude-link";
 import { getLLMClient } from "./llm-client";
 import { log, setLogDb } from "./logger";
 import { MessageDB } from "./message-db";
+import { getMemoryStore } from "./memory-store";
 
 export class MasterScheduler {
   private config: SchedulerConfig;
@@ -70,6 +71,7 @@ export class MasterScheduler {
     priority?: TaskPriority;
     constraints?: string[];
     deliveryStandards?: string[];
+    projectId?: string;
   } = {}): Promise<TaskResult> {
     const traceId = uuidv4();
     const startTime = Date.now();
@@ -140,6 +142,9 @@ export class MasterScheduler {
       const duration = (Date.now() - startTime) / 1000;
       log({ logFile: masterLogFile, prefix: 'Master', message: `任务 ${task.id} 执行完成，耗时 ${duration} 秒`, traceId, taskId: task.id });
 
+      // 7. 写入记忆（L1 经验 + L3 画像）
+      this.persistTaskMemory(task, validOutputs, duration, options.projectId, masterLogFile, traceId);
+
       return {
         success: true,
         data: task.output,
@@ -159,6 +164,179 @@ export class MasterScheduler {
         duration
       };
     }
+  }
+
+  /**
+   * 写入任务记忆（L1 经验 + L3 画像）
+   */
+  private async persistTaskMemory(
+    task: MainTask,
+    validOutputs: WorkerOutput[],
+    durationSeconds: number,
+    projectId: string | undefined,
+    masterLogFile?: string,
+    traceId?: string
+  ): Promise<void> {
+    try {
+      const memoryStore = getMemoryStore();
+      const pId = projectId || '__global__';
+
+      // L1: 写入任务经验
+      const subTasksArr = Array.from(task.subTasks.values());
+      const subTasksJson = JSON.stringify(subTasksArr.map(st => ({
+        name: st.name,
+        description: st.description,
+        workerType: st.workerType,
+        dependencies: st.dependencies,
+        skill: st.skill,
+        status: st.status,
+      })));
+
+      // 用 LLM 生成最终输出摘要（200字以内）
+      let finalOutputSummary: string | undefined;
+      try {
+        const llm = getLLMClient();
+        const outputData = typeof task.output === 'string' ? task.output : JSON.stringify(task.output, null, 2);
+        const summaryResp = await llm.ask(
+          `请用200字以内精炼概括以下任务执行结果的核心要点：\n\n${outputData.substring(0, 2000)}`,
+          { systemPrompt: "你是一个摘要生成器，只输出摘要文本，不加任何前缀。", temperature: 0.3, maxTokens: 300 }
+        );
+        if (summaryResp.success && summaryResp.content) {
+          finalOutputSummary = summaryResp.content.trim();
+        }
+      } catch (e) {
+        log({ logFile: masterLogFile, prefix: 'Master', message: `生成输出摘要失败: ${e}`, level: 'warn', traceId });
+      }
+
+      const dagLayers = this.countDagLayers(task);
+      const workerTypes = [...new Set(subTasksArr.map(st => st.workerType))].join(',');
+
+      memoryStore.insertTaskExperience({
+        projectId: pId,
+        userRequest: task.userRequest,
+        condensedRequest: task.condensedRequest,
+        subTasksJson,
+        dagLayers,
+        workerTypes,
+        status: task.status === TaskStatus.COMPLETED ? 'success' : 'partial',
+        finalOutputSummary,
+        confidence: validOutputs.length > 0
+          ? validOutputs.reduce((sum, o) => sum + o.confidence, 0) / validOutputs.length
+          : 0,
+        durationSeconds,
+        traceId,
+      });
+
+      log({ logFile: masterLogFile, prefix: 'Master', message: `L1 任务经验已写入 (项目: ${pId})`, traceId });
+
+      // L3: 更新 Worker 画像
+      for (const subTask of subTasksArr) {
+        if (subTask.output) {
+          memoryStore.updateWorkerProfile(subTask.workerType, {
+            success: subTask.output.status === 'success',
+            confidence: subTask.output.confidence,
+            durationSeconds: subTask.startedAt && subTask.completedAt
+              ? (subTask.completedAt.getTime() - subTask.startedAt.getTime()) / 1000
+              : 0,
+            skillId: subTask.skill,
+          });
+        }
+      }
+
+      log({ logFile: masterLogFile, prefix: 'Master', message: `L3 Worker 画像已更新`, traceId });
+
+      // L2: 自动提取项目知识（仅成功任务）
+      if (task.status === TaskStatus.COMPLETED && finalOutputSummary) {
+        this.autoExtractProjectKnowledge(task, pId, masterLogFile, traceId);
+      }
+    } catch (error) {
+      log({ logFile: masterLogFile, prefix: 'Master', message: `写入记忆失败: ${error}`, level: 'warn', traceId });
+    }
+  }
+
+  /**
+   * 自动提取项目知识（任务成功后由 LLM 从执行过程中提取）
+   */
+  private async autoExtractProjectKnowledge(
+    task: MainTask,
+    projectId: string,
+    masterLogFile?: string,
+    traceId?: string
+  ): Promise<void> {
+    try {
+      const llm = getLLMClient();
+      const subTasksArr = Array.from(task.subTasks.values());
+      const executionSummary = subTasksArr
+        .filter(st => st.output?.status === 'success')
+        .map(st => `- ${st.name} (${st.workerType}): ${typeof st.output!.data === 'string' ? st.output!.data.substring(0, 200) : JSON.stringify(st.output!.data).substring(0, 200)}`)
+        .join('\n');
+
+      if (!executionSummary) return;
+
+      const resp = await llm.askForJSON<{
+        knowledge: Array<{ category: string; title: string; content: string }>;
+      }>(
+        `根据以下任务执行过程，提取1-3条项目级别的知识点（技术栈、约定、架构等）。
+如果提取不到有价值的知识，返回空数组。
+
+任务: ${task.userRequest}
+
+执行过程:
+${executionSummary}
+
+返回JSON格式:
+{
+  "knowledge": [
+    {"category": "tech_stack|convention|structure|preference", "title": "标题", "content": "内容"}
+  ]
+}`,
+        { systemPrompt: "你是项目知识提取器，只返回JSON。", temperature: 0.3, maxTokens: 500 }
+      );
+
+      if (resp.success && resp.data && resp.data.knowledge.length > 0) {
+        const memoryStore = getMemoryStore();
+        for (const k of resp.data.knowledge) {
+          const validCategories = ['convention', 'tech_stack', 'structure', 'preference'];
+          const category = validCategories.includes(k.category) ? k.category : 'convention';
+          memoryStore.insertProjectKnowledge({
+            projectId,
+            category: category as any,
+            title: k.title,
+            content: k.content,
+            source: 'auto_extracted',
+          });
+        }
+        log({ logFile: masterLogFile, prefix: 'Master', message: `L2 自动提取 ${resp.data.knowledge.length} 条项目知识`, traceId });
+      }
+    } catch (error) {
+      log({ logFile: masterLogFile, prefix: 'Master', message: `自动提取项目知识失败: ${error}`, level: 'warn', traceId });
+    }
+  }
+
+  /**
+   * 计算 DAG 层数
+   */
+  private countDagLayers(task: MainTask): number {
+    const subTasks = Array.from(task.subTasks.values());
+    if (subTasks.length === 0) return 0;
+
+    // 计算每个节点的深度
+    const depthMap = new Map<string, number>();
+    const calcDepth = (id: string): number => {
+      if (depthMap.has(id)) return depthMap.get(id)!;
+      const st = task.subTasks.get(id);
+      if (!st || st.dependencies.length === 0) {
+        depthMap.set(id, 0);
+        return 0;
+      }
+      const maxDepDepth = Math.max(...st.dependencies.map(depId => calcDepth(depId)));
+      const depth = maxDepDepth + 1;
+      depthMap.set(id, depth);
+      return depth;
+    };
+
+    subTasks.forEach(st => calcDepth(st.id));
+    return Math.max(...depthMap.values()) + 1;
   }
 
   /**
@@ -187,7 +365,8 @@ export class MasterScheduler {
       subTasks: new Map(),
       dag: { nodes: new Map(), edges: new Map() },
       createdAt: new Date(),
-      traceId
+      traceId,
+      projectId: (options as any).projectId,
     };
   }
 

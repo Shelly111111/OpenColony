@@ -211,7 +211,8 @@ async function runDefaultMode(mode: 'sdk' | 'pty' = 'sdk', userRequest?: string)
 
       const result = await scheduler.submitRequest(userRequest, {
         name: "默认模式任务",
-        priority: TaskPriority.P1
+        priority: TaskPriority.P1,
+        projectId: process.env.PROJECT_ID,
       });
 
       // 任务完成后停止 stdin 监听

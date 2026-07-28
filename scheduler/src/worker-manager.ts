@@ -15,6 +15,7 @@ import {
 } from "./types";
 import { getLLMClient } from "./llm-client";
 import { log } from "./logger";
+import { getMemoryStore } from "./memory-store";
 
 
 const { ClaudeUnifiedPtyManager } = require('../../claude-multi-runner/manager');
@@ -92,6 +93,22 @@ export class WorkerManager {
     targetWorker.logFile = logFile;
 
     log({ logFile, prefix: 'WorkerManager', message: `分配子任务 ${subTask.id} 到Worker，类型: ${subTask.workerType}，模式: ${this.runMode}`, traceId, taskId: subTask.id, workerId: targetWorker.id });
+
+    // L2: 注入项目知识到命令
+    try {
+      const memoryStore = getMemoryStore();
+      const projectId = process.env.PROJECT_ID || '__global__';
+      const projectKnowledge = memoryStore.getProjectKnowledge(projectId);
+      if (projectKnowledge.length > 0) {
+        const knowledgeSection = projectKnowledge.map(k =>
+          `- [${k.category}] ${k.title}: ${k.content}`
+        ).join('\n');
+        subTask.command += `\n\n## 项目知识（请遵循）\n${knowledgeSection}`;
+        log({ logFile, prefix: 'WorkerManager', message: `L2 注入 ${projectKnowledge.length} 条项目知识`, traceId, taskId: subTask.id, workerId: targetWorker.id });
+      }
+    } catch (error) {
+      log({ logFile, prefix: 'WorkerManager', message: `L2 项目知识注入失败: ${error}`, level: 'warn', traceId, taskId: subTask.id, workerId: targetWorker.id });
+    }
 
     try {
       const result = await this.runTaskWithManager(targetWorker, subTask, traceId, logFile, this.runMode);

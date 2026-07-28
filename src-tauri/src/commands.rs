@@ -43,8 +43,9 @@ pub async fn submit_task(
 ) -> Result<TaskResult, String> {
     let task = request.task.clone();
     let mode = request.mode.unwrap_or_else(|| "sdk".to_string());
+    let project_id = request.project_id.unwrap_or_else(|| "__global__".to_string());
 
-    utils::log_info(&format!("[Tauri] 收到任务提交: {} (模式: {})", task, mode));
+    utils::log_info(&format!("[Tauri] 收到任务提交: {} (模式: {}, 项目: {})", task, mode, project_id));
 
     let scheduler_path = paths::scheduler_entry();
     if !scheduler_path.exists() {
@@ -67,6 +68,7 @@ pub async fn submit_task(
         .env("SAME_LAYER_ASYNC", format!("{}", state.same_layer_async.lock().unwrap().clone()))
         .env("MAX_CONCURRENCY", format!("{}", state.max_concurrency.lock().unwrap().clone()))
         .env("TASK_TIMEOUT_MS", format!("{}", state.task_timeout_ms.lock().unwrap().clone()))
+        .env("PROJECT_ID", &project_id)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::piped());
@@ -913,4 +915,193 @@ pub fn get_logs_by_trace_id(trace_id: String) -> Result<Vec<LogEntry>, String> {
     .collect();
 
     Ok(logs)
+}
+
+// ==================== 项目知识管理 ====================
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ProjectKnowledgeItem {
+    pub id: String,
+    pub project_id: String,
+    pub category: String,
+    pub title: String,
+    pub content: String,
+    pub source: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// memory.db 的路径
+fn memory_db_path() -> std::path::PathBuf {
+    paths::app_data_dir().join("memory.db")
+}
+
+#[tauri::command]
+pub fn get_project_knowledge(project_id: String) -> Result<Vec<ProjectKnowledgeItem>, String> {
+    let db_path = memory_db_path();
+    if !db_path.exists() {
+        return Ok(vec![]);
+    }
+
+    let conn = Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .map_err(|e| format!("打开数据库失败: {}", e))?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, project_id, category, title, content, source, created_at, updated_at FROM project_knowledge WHERE project_id = ? ORDER BY category, created_at DESC"
+    ).map_err(|e| format!("准备查询失败: {}", e))?;
+
+    let items = stmt.query_map([&project_id], |row| {
+        Ok(ProjectKnowledgeItem {
+            id: row.get(0)?,
+            project_id: row.get(1)?,
+            category: row.get(2)?,
+            title: row.get(3)?,
+            content: row.get(4)?,
+            source: row.get(5)?,
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
+        })
+    }).map_err(|e| format!("查询失败: {}", e))?
+    .filter_map(|r| r.ok())
+    .collect();
+
+    Ok(items)
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AddKnowledgeRequest {
+    pub project_id: String,
+    pub category: String,
+    pub title: String,
+    pub content: String,
+}
+
+#[tauri::command]
+pub fn add_project_knowledge(request: AddKnowledgeRequest) -> Result<TaskResult, String> {
+    let db_path = memory_db_path();
+    if !db_path.exists() {
+        return Err("记忆数据库不存在，请先执行一次任务".to_string());
+    }
+
+    let conn = Connection::open(&db_path).map_err(|e| format!("打开数据库失败: {}", e))?;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Local::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT INTO project_knowledge (id, project_id, category, title, content, source, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, 'user_specified', ?6, ?7)",
+        rusqlite::params![id, request.project_id, request.category, request.title, request.content, now, now],
+    ).map_err(|e| format!("插入失败: {}", e))?;
+
+    Ok(TaskResult::ok_with_data("项目知识添加成功", id))
+}
+
+#[tauri::command]
+pub fn delete_project_knowledge(id: String) -> Result<TaskResult, String> {
+    let db_path = memory_db_path();
+    if !db_path.exists() {
+        return Err("记忆数据库不存在".to_string());
+    }
+
+    let conn = Connection::open(&db_path).map_err(|e| format!("打开数据库失败: {}", e))?;
+    let changes = conn.execute("DELETE FROM project_knowledge WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| format!("删除失败: {}", e))?;
+
+    if changes > 0 {
+        Ok(TaskResult::ok("项目知识删除成功"))
+    } else {
+        Ok(TaskResult::err("未找到对应的知识条目"))
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct UpdateKnowledgeRequest {
+    pub id: String,
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub category: Option<String>,
+}
+
+#[tauri::command]
+pub fn update_project_knowledge(request: UpdateKnowledgeRequest) -> Result<TaskResult, String> {
+    let db_path = memory_db_path();
+    if !db_path.exists() {
+        return Err("记忆数据库不存在".to_string());
+    }
+
+    let conn = Connection::open(&db_path).map_err(|e| format!("打开数据库失败: {}", e))?;
+
+    let mut fields = Vec::new();
+    let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(ref title) = request.title {
+        fields.push("title = ?".to_string());
+        values.push(Box::new(title.clone()));
+    }
+    if let Some(ref content) = request.content {
+        fields.push("content = ?".to_string());
+        values.push(Box::new(content.clone()));
+    }
+    if let Some(ref category) = request.category {
+        fields.push("category = ?".to_string());
+        values.push(Box::new(category.clone()));
+    }
+
+    if fields.is_empty() {
+        return Ok(TaskResult::err("没有需要更新的字段"));
+    }
+
+    fields.push("updated_at = ?".to_string());
+    let now = chrono::Local::now().to_rfc3339();
+    values.push(Box::new(now));
+    values.push(Box::new(request.id.clone()));
+
+    let sql = format!("UPDATE project_knowledge SET {} WHERE id = ?", fields.join(", "));
+    let changes = conn.execute(&sql, rusqlite::params_from_iter(values.iter().map(|v| v.as_ref()))).map_err(|e| format!("更新失败: {}", e))?;
+
+    if changes > 0 {
+        Ok(TaskResult::ok("项目知识更新成功"))
+    } else {
+        Ok(TaskResult::err("未找到对应的知识条目"))
+    }
+}
+
+// ==================== 记忆统计 ====================
+
+#[derive(Serialize)]
+pub struct MemoryStats {
+    pub experience_count: i64,
+    pub knowledge_count: i64,
+    pub worker_profile_count: i64,
+}
+
+#[tauri::command]
+pub fn get_memory_stats(project_id: Option<String>) -> Result<MemoryStats, String> {
+    let db_path = memory_db_path();
+    if !db_path.exists() {
+        return Ok(MemoryStats { experience_count: 0, knowledge_count: 0, worker_profile_count: 0 });
+    }
+
+    let conn = Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .map_err(|e| format!("打开数据库失败: {}", e))?;
+
+    let exp_count: i64 = if let Some(ref pid) = project_id {
+        conn.query_row("SELECT COUNT(*) FROM task_experiences WHERE project_id = ?1", rusqlite::params![pid], |r| r.get(0))
+    } else {
+        conn.query_row("SELECT COUNT(*) FROM task_experiences", [], |r| r.get(0))
+    }.unwrap_or(0);
+
+    let knl_count: i64 = if let Some(ref pid) = project_id {
+        conn.query_row("SELECT COUNT(*) FROM project_knowledge WHERE project_id = ?1", rusqlite::params![pid], |r| r.get(0))
+    } else {
+        conn.query_row("SELECT COUNT(*) FROM project_knowledge", [], |r| r.get(0))
+    }.unwrap_or(0);
+
+    let wp_count: i64 = conn.query_row("SELECT COUNT(*) FROM worker_profiles", [], |r| r.get(0)).unwrap_or(0);
+
+    Ok(MemoryStats {
+        experience_count: exp_count,
+        knowledge_count: knl_count,
+        worker_profile_count: wp_count,
+    })
 }

@@ -28,6 +28,7 @@ import { RoleManager } from "./role-manager";
 import { log } from "./logger";
 import { loadSettings, AppSettings } from "./config/settings";
 import { ClaudeLink } from "./claude-link";
+import { getMemoryStore } from "./memory-store";
 
 export class PlanExecutor {
   private config: SchedulerConfig;
@@ -421,6 +422,37 @@ export class PlanExecutor {
     // 从 RoleManager 动态获取可用的 Agent 类型列表（含技能）
     const roleDescriptions = this.roleManager.getRoleSkillDescriptions();
 
+    // L3: 注入 Worker 画像描述
+    const memoryStore = getMemoryStore();
+    const profileDesc = memoryStore.getWorkerProfileDescriptions();
+
+    // L1: 检索相似历史任务经验
+    const projectId = task.projectId || '__global__';
+    let experienceContext = '';
+    try {
+      const similarExperiences = memoryStore.searchSimilarExperiences(projectId, task.userRequest, 3);
+      if (similarExperiences.length > 0) {
+        experienceContext = '\n## 历史相似任务参考（仅供参考，根据实际情况调整，不要照搬）\n';
+        for (const { experience, relevanceScore } of similarExperiences) {
+          const statusLabel = experience.status === 'success' ? '成功' : experience.status === 'partial' ? '部分成功' : '失败';
+          const confLabel = experience.confidence ? `·置信度${experience.confidence.toFixed(2)}` : '';
+          let expSummary = `${statusLabel}${confLabel} "${experience.userRequest.substring(0, 60)}"\n`;
+          try {
+            const subTasks = JSON.parse(experience.subTasksJson);
+            const subTaskSummary = subTasks.map((st: any) => `${st.name}(${st.workerType})`).join(' → ');
+            expSummary += `   → 拆分: ${subTaskSummary}\n`;
+          } catch { /* ignore */ }
+          if (experience.finalOutputSummary) {
+            expSummary += `   → 结果: ${experience.finalOutputSummary.substring(0, 100)}\n`;
+          }
+          experienceContext += `${similarExperiences.indexOf({ experience, relevanceScore } as any) + 1}. [${expSummary.trim()}]\n`;
+        }
+        log({ prefix: 'PlanExecutor', message: `L1 找到 ${similarExperiences.length} 条相似经验` });
+      }
+    } catch (error) {
+      log({ prefix: 'PlanExecutor', message: `L1 经验检索失败: ${error}`, level: 'warn' });
+    }
+
     const systemPrompt = `你是一个任务规划专家，负责将复杂的任务拆分为可执行的子任务。
 
 请根据用户的需求，将任务拆分为一系列子任务，在拆分时，率先考虑任务的复杂性，如果任务复杂度较低，建议拆分为较少的子任务，如果任务复杂度较高，建议考虑任务的依赖关系，每个子任务应该：
@@ -431,7 +463,7 @@ export class PlanExecutor {
 
 可用的Agent类型及其技能：
 ${roleDescriptions}
-
+${profileDesc ? `\n各角色历史表现：\n${profileDesc}` : ''}${experienceContext}
 请返回JSON格式，格式如下：
 {
   "subTasks": [

@@ -47,6 +47,11 @@ fn main() {
             commands::get_logs_by_trace_id,
             commands::inject_info,
             commands::permission_response,
+            commands::get_project_knowledge,
+            commands::add_project_knowledge,
+            commands::delete_project_knowledge,
+            commands::update_project_knowledge,
+            commands::get_memory_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

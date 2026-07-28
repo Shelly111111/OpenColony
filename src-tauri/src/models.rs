@@ -75,6 +75,8 @@ pub struct TaskRequest {
     pub task: String,
     #[serde(default)]
     pub mode: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
 }
 
 // ==================== 系统状态 ====================

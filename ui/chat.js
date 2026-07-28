@@ -1,7 +1,15 @@
-// ==================== 对话 Tab ====================
+// ==================== 对话 Tab（多会话管理） ====================
 
+// 会话数据结构：每个 tab 对应一个 session
+const sessions = {
+  master: {
+    sessionId: 'master',
+    title: 'Master',
+    messages: [],
+    traceId: null,
+  }
+};
 let currentChatTab = 'master';
-const chatMessages = { master: [] };
 
 // prefix 对应的显示标签和颜色
 const PREFIX_STYLES = {
@@ -12,23 +20,91 @@ const PREFIX_STYLES = {
   LLMClient:         { label: 'LLM',     color: '#f472b6' },
   ClaudeLink:        { label: 'Link',    color: '#2dd4bf' },
   RoleManager:       { label: 'Role',    color: '#fb923c' },
+  MemoryStore:       { label: 'Memory',  color: '#818cf8' },
 };
 
+/** 获取当前会话 */
+function currentSession() {
+  return sessions[currentChatTab];
+}
+
+/** 获取当前会话的消息列表 */
+function currentMessages() {
+  return sessions[currentChatTab]?.messages || [];
+}
+
 function switchChatTab(tabName) {
+  if (!sessions[tabName]) return;
   currentChatTab = tabName;
   document.querySelectorAll('.chat-tab').forEach(tab => {
     if (tab.classList.contains('add-tab')) return;
     tab.classList.toggle('active', tab.dataset.tab === tabName);
   });
+  // 切换 traceId 上下文
+  window.currentTraceId = sessions[tabName].traceId || null;
   renderMessages();
 }
 
+/** 新增会话 tab */
 function addNewTab() {
-  alert('新增对话功能开发中');
+  const sessionId = 'session_' + Date.now();
+  const title = '新会话';
+  sessions[sessionId] = {
+    sessionId,
+    title,
+    messages: [],
+    traceId: null,
+  };
+
+  // 在 add-tab 之前插入新 tab 按钮
+  const tabBar = document.getElementById('chatTabBar');
+  const addBtn = tabBar.querySelector('.add-tab');
+  const tab = document.createElement('button');
+  tab.className = 'chat-tab';
+  tab.dataset.tab = sessionId;
+  tab.innerHTML = `<span class="tab-title" ondblclick="renameTab('${sessionId}')">${title}</span><span class="tab-close" onclick="closeTab(event, '${sessionId}')">x</span>`;
+  tab.onclick = () => switchChatTab(sessionId);
+  tabBar.insertBefore(tab, addBtn);
+
+  switchChatTab(sessionId);
+}
+
+/** 关闭会话 tab */
+function closeTab(event, tabName) {
+  event.stopPropagation();
+  if (tabName === 'master') return; // 主 tab 不可关闭
+  if (!sessions[tabName]) return;
+
+  // 切换到前一个 tab
+  const tabKeys = Object.keys(sessions);
+  const idx = tabKeys.indexOf(tabName);
+  const newTab = tabKeys[Math.max(0, idx - 1)] || 'master';
+
+  delete sessions[tabName];
+
+  // 移除 tab DOM
+  const tabEl = document.querySelector(`.chat-tab[data-tab="${tabName}"]`);
+  if (tabEl) tabEl.remove();
+
+  switchChatTab(newTab);
+}
+
+/** 双击重命名 tab */
+function renameTab(tabName) {
+  const session = sessions[tabName];
+  if (!session) return;
+  const newTitle = prompt('修改会话名称:', session.title);
+  if (newTitle && newTitle.trim()) {
+    session.title = newTitle.trim();
+    const tabEl = document.querySelector(`.chat-tab[data-tab="${tabName}"] .tab-title`);
+    if (tabEl) tabEl.textContent = session.title;
+  }
 }
 
 function clearMessages() {
-  chatMessages.master = [];
+  if (sessions[currentChatTab]) {
+    sessions[currentChatTab].messages = [];
+  }
   renderMessages();
 }
 
@@ -95,7 +171,7 @@ function updateMessageDom(msg) {
 
 /** 更新消息计数 */
 function updateMsgCount() {
-  const messages = chatMessages[currentChatTab] || [];
+  const messages = currentMessages();
   document.getElementById('msgCount').textContent = messages.length;
 }
 
@@ -103,7 +179,7 @@ function updateMsgCount() {
 
 function renderMessages() {
   const container = document.getElementById('chatMessages');
-  const messages = chatMessages[currentChatTab] || [];
+  const messages = currentMessages();
 
   updateMsgCount();
 
@@ -123,13 +199,13 @@ function initSchedulerListeners() {
   // 监听 scheduler 输出
   window.__TAURI__.event.listen('scheduler-output', (event) => {
     const { traceId, type, line, prefix, message, level } = event.payload;
-    if (!chatMessages.master) chatMessages.master = [];
+    const msgs = currentMessages();
 
     if (type === 'log') {
       const levelIcon = level === 'error' ? '❌' : level === 'warn' ? '⚠️' : '';
       const displayMsg = levelIcon ? `${levelIcon} ${message}` : message;
 
-      const lastMsg = chatMessages.master[chatMessages.master.length - 1];
+      const lastMsg = msgs[msgs.length - 1];
       if (lastMsg && lastMsg.type === 'master' && lastMsg.prefix === prefix && !lastMsg.closed) {
         // 追加到最后一条同 prefix 消息 —— 只更新该元素
         lastMsg.content += '\n' + displayMsg;
@@ -137,26 +213,26 @@ function initSchedulerListeners() {
       } else {
         // 新建一条消息 —— 只追加新元素
         const msg = { type: 'master', prefix, content: displayMsg, closed: false };
-        chatMessages.master.push(msg);
+        msgs.push(msg);
         appendMessageDom(msg);
       }
     } else if (type === 'stdout') {
       if (line.match(/^\s*(PRAGMA|CREATE|INSERT|SELECT|ALTER|DROP)\s/i)) return;
       if (line.trim() === '') return;
 
-      const lastMsg = chatMessages.master[chatMessages.master.length - 1];
+      const lastMsg = msgs[msgs.length - 1];
       if (lastMsg && lastMsg.type === 'master' && !lastMsg.prefix && !lastMsg.closed) {
         lastMsg.content += '\n' + line;
         updateMessageDom(lastMsg);
       } else {
         const msg = { type: 'master', content: line, closed: false };
-        chatMessages.master.push(msg);
+        msgs.push(msg);
         appendMessageDom(msg);
       }
     } else if (type === 'stderr') {
       if (line.trim() === '') return;
       const msg = { type: 'master', prefix: 'stderr', content: `⚠️ ${line}`, closed: true };
-      chatMessages.master.push(msg);
+      msgs.push(msg);
       appendMessageDom(msg);
     }
 
@@ -166,8 +242,9 @@ function initSchedulerListeners() {
   // 监听任务完成
   window.__TAURI__.event.listen('task-completed', (event) => {
     const { traceId, exitCode, error } = event.payload;
+    const msgs = currentMessages();
 
-    const lastMsg = chatMessages.master[chatMessages.master.length - 1];
+    const lastMsg = msgs[msgs.length - 1];
     if (lastMsg && lastMsg.type === 'master') {
       lastMsg.closed = true;
     }
@@ -179,13 +256,14 @@ function initSchedulerListeners() {
         : `⚠️ 任务已退出 (退出码: ${exitCode})`;
 
     const msg = { type: 'master', content: statusText, closed: true };
-    chatMessages.master.push(msg);
+    msgs.push(msg);
     appendMessageDom(msg);
     updateMsgCount();
 
     document.getElementById('masterTabStatus').textContent = '● 已完成';
     document.getElementById('masterTabStatus').style.color = '#4ade80';
-    // 任务完成，清除当前 traceId
+    // 清除当前会话的 traceId
+    if (currentSession()) currentSession().traceId = null;
     window.currentTraceId = null;
   });
 }
@@ -235,13 +313,21 @@ async function sendMessage() {
   const mode = document.getElementById('runModeSelect').value;
   const permissionMode = document.getElementById('permissionModeSelect')?.value || 'ask';
   const parsed = parseInput(text, isTaskRunning());
+  const session = currentSession();
+  const msgs = currentMessages();
 
-  if (!chatMessages[currentChatTab]) chatMessages[currentChatTab] = [];
   const userMsg = { type: 'user', content: text };
-  chatMessages[currentChatTab].push(userMsg);
+  msgs.push(userMsg);
   input.value = '';
   appendMessageDom(userMsg);
   updateMsgCount();
+
+  // 首条消息时自动设置会话标题
+  if (msgs.length === 1 && session) {
+    session.title = text.substring(0, 20) + (text.length > 20 ? '...' : '');
+    const tabEl = document.querySelector(`.chat-tab[data-tab="${currentChatTab}"] .tab-title`);
+    if (tabEl) tabEl.textContent = session.title;
+  }
 
   // 补充信息注入
   if (parsed.type === 'inject') {
@@ -249,20 +335,27 @@ async function sendMessage() {
     return;
   }
 
-  // 普通任务提交
+  // 普通任务提交（带 projectId = 当前会话的 sessionId）
   try {
-    const result = await invoke('submit_task', { request: { task: text, mode } });
+    const result = await invoke('submit_task', {
+      request: {
+        task: text,
+        mode,
+        project_id: session?.sessionId || '__global__',
+      }
+    });
 
     if (result.success) {
       // 存储当前 traceId，供补充信息注入使用
       window.currentTraceId = result.trace_id || null;
+      if (session) session.traceId = result.trace_id || null;
       const permLabel = { ask: 'Ask（逐条审批）', auto: 'Auto（自动接受编辑）', bypass: 'Bypass（跳过权限）' };
       const msg = {
         type: 'master',
         content: `✅ ${result.message}\n\n📝 Trace ID: ${result.trace_id || 'N/A'}\n🔐 权限模式: ${permLabel[permissionMode] || permissionMode}\n${result.data || ''}`,
         closed: true
       };
-      chatMessages[currentChatTab].push(msg);
+      msgs.push(msg);
       appendMessageDom(msg);
       document.getElementById('masterTabStatus').textContent = '● 执行中';
       document.getElementById('masterTabStatus').style.color = '#facc15';
@@ -271,7 +364,7 @@ async function sendMessage() {
         type: 'master',
         content: `❌ 任务提交失败: ${result.message}`
       };
-      chatMessages[currentChatTab].push(msg);
+      msgs.push(msg);
       appendMessageDom(msg);
     }
   } catch (e) {
@@ -279,7 +372,7 @@ async function sendMessage() {
       type: 'master',
       content: `❌ 调用失败: ${e}`
     };
-    chatMessages[currentChatTab].push(msg);
+    msgs.push(msg);
     appendMessageDom(msg);
   }
 
@@ -312,7 +405,7 @@ async function sendSupplementaryInfo(parsed, mode) {
       content: '⚠️ 当前没有执行中的任务，无法注入补充信息。请先提交任务。',
       closed: true
     };
-    chatMessages[currentChatTab].push(msg);
+    currentMessages().push(msg);
     appendMessageDom(msg);
     updateMsgCount();
     return;
@@ -339,7 +432,7 @@ async function sendSupplementaryInfo(parsed, mode) {
         closed: true,
         isHtml: true,
       };
-      chatMessages[currentChatTab].push(msg);
+      currentMessages().push(msg);
       appendMessageDom(msg);
     } else {
       const msg = {
@@ -347,7 +440,7 @@ async function sendSupplementaryInfo(parsed, mode) {
         content: `❌ 补充信息注入失败: ${result.message}`,
         closed: true
       };
-      chatMessages[currentChatTab].push(msg);
+      currentMessages().push(msg);
       appendMessageDom(msg);
     }
   } catch (e) {
@@ -356,7 +449,7 @@ async function sendSupplementaryInfo(parsed, mode) {
       content: `❌ 注入调用失败: ${e}`,
       closed: true
     };
-    chatMessages[currentChatTab].push(msg);
+    currentMessages().push(msg);
     appendMessageDom(msg);
   }
 
