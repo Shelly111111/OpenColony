@@ -206,15 +206,6 @@ export enum PermissionMode {
 // ==================== ClaudeLink 通信相关类型 ====================
 
 /**
- * 消息优先级
- */
-export enum MessagePriority {
-  HIGH = "high",
-  NORMAL = "normal",
-  LOW = "low"
-}
-
-/**
  * 消息状态
  */
 export enum MessageStatus {
@@ -232,7 +223,6 @@ export interface Message {
   fromWorkerId: string;
   toWorkerId: string;
   content: string;
-  priority: MessagePriority;
   status: MessageStatus;
   context?: Record<string, any>;
   createdAt: Date;

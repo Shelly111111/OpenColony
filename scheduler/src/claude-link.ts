@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { Message, MessagePriority, MessageStatus, ClaudeLinkConfig, WorkerStatusInfo, WorkerInstance } from "./types";
+import { Message, MessageStatus, ClaudeLinkConfig, WorkerStatusInfo, WorkerInstance } from "./types";
 import { MessageDB } from "./message-db";
 import { v4 as uuidv4 } from "uuid";
 import { log } from "./logger";
@@ -84,7 +84,6 @@ export class ClaudeLink extends EventEmitter {
     fromWorkerId: string,
     toWorkerId: string,
     content: string,
-    priority: MessagePriority = MessagePriority.NORMAL,
     context?: Record<string, any>
   ): Promise<Message> {
     const message: Message = {
@@ -92,21 +91,16 @@ export class ClaudeLink extends EventEmitter {
       fromWorkerId,
       toWorkerId,
       content,
-      priority,
       status: MessageStatus.PENDING,
       context,
       createdAt: new Date(),
-      ttl: priority === MessagePriority.HIGH ? 300 : priority === MessagePriority.NORMAL ? 3600 : 86400
+      ttl: 3600
     };
 
     this.db.insertMessage(message);
-    log({ prefix: 'ClaudeLink', message: `消息发送: ${fromWorkerId} -> ${toWorkerId} (优先级: ${priority})` });
+    log({ prefix: 'ClaudeLink', message: `消息发送: ${fromWorkerId} -> ${toWorkerId}` });
 
     this.emit(`message:${toWorkerId}`, message);
-
-    if (priority === MessagePriority.HIGH) {
-      this.emit(`highPriorityMessage:${toWorkerId}`, message);
-    }
 
     return message;
   }
@@ -114,14 +108,13 @@ export class ClaudeLink extends EventEmitter {
   public async broadcast(
     fromWorkerId: string,
     content: string,
-    priority: MessagePriority = MessagePriority.NORMAL,
     context?: Record<string, any>
   ): Promise<Message[]> {
     const messages: Message[] = [];
 
     for (const workerId of this.workers.keys()) {
       if (workerId !== fromWorkerId) {
-        const message = await this.sendMessage(fromWorkerId, workerId, content, priority, context);
+        const message = await this.sendMessage(fromWorkerId, workerId, content, context);
         messages.push(message);
       }
     }
@@ -156,13 +149,8 @@ export class ClaudeLink extends EventEmitter {
     this.on(`message:${workerId}`, callback);
   }
 
-  public onHighPriorityMessage(workerId: string, callback: (message: Message) => void): void {
-    this.on(`highPriorityMessage:${workerId}`, callback);
-  }
-
   public removeMessageListener(workerId: string): void {
     this.removeAllListeners(`message:${workerId}`);
-    this.removeAllListeners(`highPriorityMessage:${workerId}`);
   }
 
   public shutdown(): void {

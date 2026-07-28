@@ -8,7 +8,7 @@ import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { log, LOG_DIR } from '../utils/logger';
 import { ClaudeLink } from '../../scheduler/src/claude-link';
-import { MessagePriority, PermissionMode } from '../../scheduler/src/types';
+import { PermissionMode } from '../../scheduler/src/types';
 import { z } from "zod";
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -60,7 +60,7 @@ export class ClaudeSDKClient {
       tools: [
         tool(
           "send_to",
-          "向指定的 Worker 发送普通优先级的私信消息",
+          "向指定的 Worker 发送私信消息",
           {
             worker_id: z.string().describe("目标 Worker 的 ID"),
             message: z.string().describe("消息内容")
@@ -68,7 +68,7 @@ export class ClaudeSDKClient {
           async (args) => {
             const { worker_id, message } = args;
             log({ logFile: undefined, message: `[协作] ${self.workerId} -> ${worker_id}: ${message}` });
-            await self.claudeLink.sendMessage(self.workerId, worker_id, message, MessagePriority.NORMAL);
+            await self.claudeLink.sendMessage(self.workerId, worker_id, message);
             return {
               content: [{
                 type: "text",
@@ -80,19 +80,19 @@ export class ClaudeSDKClient {
 
         tool(
           "send_to_high",
-          "向指定的 Worker 发送高优先级消息，目标 Worker 会立即暂停并处理",
+          "向指定的 Worker 发送紧急消息，目标 Worker 应尽快处理",
           {
             worker_id: z.string().describe("目标 Worker 的 ID"),
             message: z.string().describe("消息内容")
           },
           async (args) => {
             const { worker_id, message } = args;
-            log({ logFile: undefined, message: `[协作] ${self.workerId} -> ${worker_id} (高优先级): ${message}` });
-            await self.claudeLink.sendMessage(self.workerId, worker_id, message, MessagePriority.HIGH);
+            log({ logFile: undefined, message: `[协作] ${self.workerId} -> ${worker_id} (紧急): ${message}` });
+            await self.claudeLink.sendMessage(self.workerId, worker_id, `[紧急] ${message}`);
             return {
               content: [{
                 type: "text",
-                text: `高优先级消息已发送给 ${worker_id}`
+                text: `紧急消息已发送给 ${worker_id}`
               }]
             };
           }
@@ -107,7 +107,7 @@ export class ClaudeSDKClient {
           async (args) => {
             const { message } = args;
             log({ logFile: undefined, message: `[协作] ${self.workerId} 广播: ${message}` });
-            await self.claudeLink.broadcast(self.workerId, message, MessagePriority.NORMAL);
+            await self.claudeLink.broadcast(self.workerId, message);
             return {
               content: [{
                 type: "text",
@@ -127,7 +127,7 @@ export class ClaudeSDKClient {
           async (args) => {
             const { worker_id, task_description } = args;
             log({ logFile: undefined, message: `[协作] ${self.workerId} 请求 ${worker_id} 帮助: ${task_description}` });
-            await self.claudeLink.sendMessage(self.workerId, worker_id, `[请求帮助] ${task_description}`, MessagePriority.NORMAL);
+            await self.claudeLink.sendMessage(self.workerId, worker_id, `[请求帮助] ${task_description}`);
             return {
               content: [{
                 type: "text",
@@ -153,7 +153,7 @@ export class ClaudeSDKClient {
               };
             }
             const messagesText = messages.map(msg =>
-              `[${msg.fromWorkerId}] ${msg.content} (优先级: ${msg.priority})`
+              `[${msg.fromWorkerId}] ${msg.content}`
             ).join('\n');
             return {
               content: [{

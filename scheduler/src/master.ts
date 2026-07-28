@@ -23,7 +23,6 @@ import {
   InjectionTiming,
   InjectionStatus,
   RouteDetail,
-  MessagePriority,
   WorkerInstance
 } from "./types";
 import { PlanExecutor } from "./plan-executor";
@@ -483,10 +482,9 @@ ${executionSummary}
       };
     }
 
-    const priority = timing === InjectionTiming.INTERRUPT ? MessagePriority.HIGH : MessagePriority.NORMAL;
     const messageIds: string[] = [];
     for (const worker of activeWorkers) {
-      const message = await claudeLink.sendMessage(fromWorkerId, worker.id, request.content, priority, {
+      const message = await claudeLink.sendMessage(fromWorkerId, worker.id, request.content, {
         type: 'supplementary_info',
         traceId: request.traceId,
         timing,
@@ -535,10 +533,9 @@ ${executionSummary}
       };
     }
 
-    const priority = timing === InjectionTiming.INTERRUPT ? MessagePriority.HIGH : MessagePriority.NORMAL;
     const messageIds: string[] = [];
     for (const worker of workers) {
-      const message = await claudeLink.sendMessage(fromWorkerId, worker.id, request.content, priority, {
+      const message = await claudeLink.sendMessage(fromWorkerId, worker.id, request.content, {
         type: 'supplementary_info',
         traceId: request.traceId,
         timing,
@@ -590,8 +587,7 @@ ${executionSummary}
     // 如果只有一个活跃Worker，直接路由
     if (workers.length === 1) {
       const worker = workers[0];
-      const priority = timing === InjectionTiming.INTERRUPT ? MessagePriority.HIGH : MessagePriority.NORMAL;
-      const message = await claudeLink.sendMessage(fromWorkerId, worker.id, request.content, priority, {
+      const message = await claudeLink.sendMessage(fromWorkerId, worker.id, request.content, {
         type: 'supplementary_info',
         traceId: request.traceId,
         timing,
@@ -631,8 +627,7 @@ ${executionSummary}
       };
     }
 
-    const priority = timing === InjectionTiming.INTERRUPT ? MessagePriority.HIGH : MessagePriority.NORMAL;
-    const message = await claudeLink.sendMessage(fromWorkerId, routeDecision.targetWorkerId, request.content, priority, {
+    const message = await claudeLink.sendMessage(fromWorkerId, routeDecision.targetWorkerId, request.content, {
       type: 'supplementary_info',
       traceId: request.traceId,
       timing,

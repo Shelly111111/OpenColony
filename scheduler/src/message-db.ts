@@ -1,7 +1,7 @@
 import * as path from "path";
 import * as fs from "fs";
 import Database from "better-sqlite3";
-import { Message, MessageStatus, MessagePriority } from "./types";
+import { Message, MessageStatus } from "./types";
 
 export class MessageDB {
   private db: ReturnType<typeof Database>;
@@ -32,7 +32,6 @@ export class MessageDB {
         from_worker_id TEXT NOT NULL,
         to_worker_id TEXT NOT NULL,
         content TEXT NOT NULL,
-        priority TEXT NOT NULL DEFAULT 'normal',
         status TEXT NOT NULL DEFAULT 'pending',
         context TEXT,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -42,10 +41,9 @@ export class MessageDB {
         ttl INTEGER DEFAULT 3600,
         retry_count INTEGER DEFAULT 0
       );
-      
+
       CREATE INDEX IF NOT EXISTS idx_messages_to_worker_id ON messages(to_worker_id);
       CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);
-      CREATE INDEX IF NOT EXISTS idx_messages_priority ON messages(priority);
       CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 
       CREATE TABLE IF NOT EXISTS logs (
@@ -69,9 +67,9 @@ export class MessageDB {
   insertMessage(message: Message): void {
     const stmt = this.db.prepare(`
       INSERT INTO messages (
-        id, from_worker_id, to_worker_id, content, priority, status,
+        id, from_worker_id, to_worker_id, content, status,
         context, created_at, sent_at, received_at, processed_at, ttl, retry_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -79,7 +77,6 @@ export class MessageDB {
       message.fromWorkerId,
       message.toWorkerId,
       message.content,
-      message.priority,
       message.status,
       message.context ? JSON.stringify(message.context) : null,
       message.createdAt.toISOString(),
@@ -97,7 +94,7 @@ export class MessageDB {
       WHERE to_worker_id = ? 
         AND status = 'pending'
         AND (ttl IS NULL OR strftime('%s', 'now') - strftime('%s', created_at) < ttl)
-      ORDER BY priority DESC, created_at ASC
+      ORDER BY created_at ASC
     `);
 
     const rows = stmt.all(workerId) as any[];
@@ -186,7 +183,6 @@ export class MessageDB {
       fromWorkerId: row.from_worker_id,
       toWorkerId: row.to_worker_id,
       content: row.content,
-      priority: row.priority as MessagePriority,
       status: row.status as MessageStatus,
       context: row.context ? JSON.parse(row.context) : undefined,
       createdAt: new Date(row.created_at),
