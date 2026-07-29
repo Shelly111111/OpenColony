@@ -94,6 +94,37 @@ function startStdinListener(scheduler: MasterScheduler): { stop: () => void } {
   });
 
   rl.on('line', async (line: string) => {
+    // 强制终止任务
+    const cancelPrefix = '__FORCE_CANCEL__:';
+    if (line.startsWith(cancelPrefix)) {
+      const jsonStr = line.slice(cancelPrefix.length);
+      let cmd: any;
+      try {
+        cmd = JSON.parse(jsonStr);
+      } catch {
+        log({ message: `stdin 强制终止命令 JSON 解析失败: ${jsonStr}`, level: 'error' });
+        return;
+      }
+
+      log({ message: `收到强制终止请求: trace_id=${cmd.trace_id}` });
+
+      try {
+        const cancelled = scheduler.forceCancel(cmd.trace_id || '');
+        process.stdout.write(`__FORCE_CANCEL_RESULT__:${JSON.stringify({
+          trace_id: cmd.trace_id,
+          success: cancelled,
+          message: cancelled ? '任务已标记为强制终止' : '未找到对应任务',
+        })}\n`);
+      } catch (error) {
+        process.stdout.write(`__FORCE_CANCEL_RESULT__:${JSON.stringify({
+          trace_id: cmd.trace_id,
+          success: false,
+          message: error instanceof Error ? error.message : String(error),
+        })}\n`);
+      }
+      return;
+    }
+
     // 权限审批响应
     const permPrefix = '__PERM_RESP__:';
     if (line.startsWith(permPrefix)) {
@@ -348,7 +379,9 @@ async function runCommand(args: string[]) {
   const scheduler = new MasterScheduler({
     maxWorkers: options.maxWorkers,
     arbitrationMode: options.arbitrationMode,
-    workerTypes: ['general_agent', 'code_agent', 'review_agent']
+    workerTypes: ['general_agent', 'code_agent', 'review_agent'],
+    maxLoopRounds: process.env.MAX_LOOP_ROUNDS ? parseInt(process.env.MAX_LOOP_ROUNDS) : undefined,
+    loopConfidenceThreshold: process.env.LOOP_CONFIDENCE_THRESHOLD ? parseFloat(process.env.LOOP_CONFIDENCE_THRESHOLD) : undefined,
   });
 
   try {

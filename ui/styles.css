@@ -1878,3 +1878,42 @@ body {
   border-color: #dc2626;
 }
 
+/* ==================== 强制终止按钮 ==================== */
+
+.force-cancel-btn {
+  position: fixed;
+  bottom: 90px;
+  right: 24px;
+  z-index: 9999;
+  padding: 10px 24px;
+  border: 2px solid #ef4444;
+  border-radius: 10px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(220, 38, 38, 0.4);
+  transition: all 0.2s;
+  animation: pulseCancel 2s infinite;
+}
+
+.force-cancel-btn:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+  box-shadow: 0 6px 24px rgba(220, 38, 38, 0.6);
+}
+
+.force-cancel-btn:disabled {
+  background: #94a3b8;
+  border-color: #94a3b8;
+  cursor: not-allowed;
+  animation: none;
+  box-shadow: none;
+}
+
+@keyframes pulseCancel {
+  0%, 100% { box-shadow: 0 4px 16px rgba(220, 38, 38, 0.4); }
+  50% { box-shadow: 0 4px 24px rgba(220, 38, 38, 0.7); }
+}
+

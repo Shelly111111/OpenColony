@@ -68,6 +68,8 @@ pub async fn submit_task(
         .env("SAME_LAYER_ASYNC", format!("{}", state.same_layer_async.lock().unwrap().clone()))
         .env("MAX_CONCURRENCY", format!("{}", state.max_concurrency.lock().unwrap().clone()))
         .env("TASK_TIMEOUT_MS", format!("{}", state.task_timeout_ms.lock().unwrap().clone()))
+        .env("MAX_LOOP_ROUNDS", format!("{}", state.max_loop_rounds.lock().unwrap().clone()))
+        .env("LOOP_CONFIDENCE_THRESHOLD", format!("{}", state.loop_confidence_threshold.lock().unwrap().clone() as f64 / 1000.0))
         .env("PROJECT_ID", &project_id)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -148,6 +150,15 @@ pub async fn submit_task(
                     let app_state: State<AppState> = app_handle.state();
                     let mut pending = app_state.pending_injects.lock().unwrap();
                     if let Some(tx) = pending.remove(&req_id) {
+                        let _ = tx.send(parsed);
+                    }
+                } else if let Some(rest) = line.strip_prefix("__FORCE_CANCEL_RESULT__:") {
+                    // 强制终止结果：按 trace_id 匹配 pending cancel channel
+                    let parsed: serde_json::Value = serde_json::from_str(rest).unwrap_or_default();
+                    let tid = parsed.get("trace_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let app_state: State<AppState> = app_handle.state();
+                    let mut pending = app_state.pending_force_cancels.lock().unwrap();
+                    if let Some(tx) = pending.remove(&tid) {
                         let _ = tx.send(parsed);
                     }
                 } else {
@@ -490,6 +501,8 @@ pub fn get_system_config() -> SystemConfig {
         same_layer_async: env.get("SAME_LAYER_ASYNC").and_then(|v| v.parse().ok()).unwrap_or(stored.same_layer_async),
         max_concurrency: env.get("MAX_CONCURRENCY").and_then(|v| v.parse().ok()).unwrap_or(stored.max_concurrency),
         task_timeout_ms: env.get("TASK_TIMEOUT_MS").and_then(|v| v.parse().ok()).unwrap_or(stored.task_timeout_ms),
+        max_loop_rounds: env.get("MAX_LOOP_ROUNDS").and_then(|v| v.parse().ok()).unwrap_or(stored.max_loop_rounds),
+        loop_confidence_threshold: env.get("LOOP_CONFIDENCE_THRESHOLD").and_then(|v| v.parse().ok()).unwrap_or(stored.loop_confidence_threshold),
     }
 }
 
@@ -543,6 +556,14 @@ pub fn save_system_config(config: SystemConfig, state: State<AppState>) -> TaskR
                 {
                     let mut tt = state.task_timeout_ms.lock().unwrap();
                     *tt = to_store.task_timeout_ms;
+                }
+                {
+                    let mut mlr = state.max_loop_rounds.lock().unwrap();
+                    *mlr = to_store.max_loop_rounds;
+                }
+                {
+                    let mut lct = state.loop_confidence_threshold.lock().unwrap();
+                    *lct = (to_store.loop_confidence_threshold * 1000.0) as i32;
                 }
                 utils::log_info(&format!("[Tauri] 配置已保存: .env + {}", cfg_path.display()));
                 TaskResult::ok_with_data(
@@ -838,6 +859,67 @@ pub fn get_logs_by_trace_id(trace_id: String) -> Result<Vec<LogEntry>, String> {
     .collect();
 
     Ok(logs)
+}
+
+// ==================== 强制终止任务 ====================
+
+/// 前端用户点击"终止任务"按钮后调用：将终止命令写入 scheduler 进程的 stdin
+#[tauri::command]
+pub async fn force_cancel_task(
+    trace_id: String,
+    state: State<'_, AppState>,
+) -> Result<TaskResult, String> {
+    // 创建 oneshot channel 等待 scheduler 进程的响应
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    {
+        let mut pending = state.pending_force_cancels.lock().unwrap();
+        pending.insert(trace_id.clone(), tx);
+    }
+
+    // 构造强制终止命令 JSON，写入 scheduler 进程的 stdin
+    let cancel_cmd = serde_json::json!({
+        "trace_id": trace_id,
+    });
+    let cmd_line = format!("__FORCE_CANCEL__:{}\n", cancel_cmd);
+
+    {
+        let mut stdin_lock = state.scheduler_stdin.lock().await;
+        match stdin_lock.as_mut() {
+            Some(stdin) => {
+                if let Err(e) = stdin.write_all(cmd_line.as_bytes()).await {
+                    let mut pending = state.pending_force_cancels.lock().unwrap();
+                    pending.remove(&trace_id);
+                    return Ok(TaskResult::err(&format!("写入 scheduler stdin 失败: {}", e)));
+                }
+            }
+            None => {
+                let mut pending = state.pending_force_cancels.lock().unwrap();
+                pending.remove(&trace_id);
+                return Ok(TaskResult::err("当前没有运行中的任务，无法强制终止"));
+            }
+        }
+    }
+
+    // 等待响应，超时 10 秒
+    match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+        Ok(Ok(result)) => {
+            let success = result.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+            let message = result.get("message").and_then(|v| v.as_str()).unwrap_or("未知结果").to_string();
+            if success {
+                Ok(TaskResult::ok(&message))
+            } else {
+                Ok(TaskResult::err(&message))
+            }
+        }
+        Ok(Err(_)) => {
+            Ok(TaskResult::err("scheduler 进程已退出，终止未完成"))
+        }
+        Err(_) => {
+            let mut pending = state.pending_force_cancels.lock().unwrap();
+            pending.remove(&trace_id);
+            Ok(TaskResult::err("终止超时（10秒未收到响应）"))
+        }
+    }
 }
 
 

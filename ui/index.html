@@ -319,6 +319,16 @@
                   <input id="taskTimeout" type="number" class="form-input" min="60" max="3600" value="600" step="60">
                   <span class="form-hint">单个Worker执行超时时间</span>
                 </div>
+                <div class="form-group">
+                  <label>循环调度最大轮次</label>
+                  <input id="maxLoopRounds" type="number" class="form-input" min="1" max="20" value="5" step="1">
+                  <span class="form-hint">评审未通过时最大重试轮数</span>
+                </div>
+                <div class="form-group">
+                  <label>循环置信度阈值</label>
+                  <input id="loopConfidenceThreshold" type="number" class="form-input" min="0.5" max="1.0" value="0.8" step="0.05">
+                  <span class="form-hint">评审置信度达到此值时视为通过（0.5-1.0）</span>
+                </div>
               </div>
             </div>
           </div>

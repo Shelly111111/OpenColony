@@ -2,7 +2,9 @@
   "taskExecution": {
     "sameLayerAsync": true,
     "maxConcurrency": 5,
-    "taskTimeout": 600000
+    "taskTimeout": 600000,
+    "maxLoopRounds": 5,
+    "loopConfidenceThreshold": 0.8
   },
   "dagScheduling": {
     "enabled": true,

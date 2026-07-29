@@ -203,7 +203,11 @@ function initSchedulerListeners() {
 
     if (type === 'log') {
       const levelIcon = level === 'error' ? '❌' : level === 'warn' ? '⚠️' : '';
-      const displayMsg = levelIcon ? `${levelIcon} ${message}` : message;
+      // 循环调度状态格式化
+      const loopFormatted = formatLoopStatusLog(message);
+      const displayMsg = loopFormatted
+        ? loopFormatted
+        : (levelIcon ? `${levelIcon} ${message}` : message);
 
       const lastMsg = msgs[msgs.length - 1];
       if (lastMsg && lastMsg.type === 'master' && lastMsg.prefix === prefix && !lastMsg.closed) {
@@ -262,6 +266,8 @@ function initSchedulerListeners() {
 
     document.getElementById('masterTabStatus').textContent = '● 已完成';
     document.getElementById('masterTabStatus').style.color = '#4ade80';
+    // 隐藏强制终止按钮
+    hideForceCancelButton();
     // 清除当前会话的 traceId
     if (currentSession()) currentSession().traceId = null;
     window.currentTraceId = null;
@@ -359,6 +365,8 @@ async function sendMessage() {
       appendMessageDom(msg);
       document.getElementById('masterTabStatus').textContent = '● 执行中';
       document.getElementById('masterTabStatus').style.color = '#facc15';
+      // 显示强制终止按钮
+      showForceCancelButton(result.trace_id);
     } else {
       const msg = {
         type: 'master',
@@ -567,3 +575,111 @@ function initPermissionListener() {
 
 // 初始化权限监听
 initPermissionListener();
+
+// ==================== 强制终止按钮 & 循环调度状态 ====================
+
+/**
+ * 显示强制终止按钮（任务执行中时）
+ */
+function showForceCancelButton(traceId) {
+  // 如果已存在则不重复创建
+  if (document.getElementById('forceCancelBtn')) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'forceCancelBtn';
+  btn.className = 'force-cancel-btn';
+  btn.innerHTML = '⏹ 终止任务';
+  btn.onclick = () => handleForceCancel(traceId);
+  document.body.appendChild(btn);
+}
+
+/**
+ * 隐藏强制终止按钮
+ */
+function hideForceCancelButton() {
+  const btn = document.getElementById('forceCancelBtn');
+  if (btn) btn.remove();
+}
+
+/**
+ * 处理强制终止
+ */
+async function handleForceCancel(traceId) {
+  const btn = document.getElementById('forceCancelBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '⏳ 终止中...';
+  }
+
+  try {
+    const result = await invoke('force_cancel_task', { traceId });
+    if (result.success) {
+      showToast('任务已强制终止', 'info');
+      hideForceCancelButton();
+      document.getElementById('masterTabStatus').textContent = '● 已终止';
+      document.getElementById('masterTabStatus').style.color = '#f87171';
+    } else {
+      showToast(`终止失败: ${result.message}`, 'error');
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '⏹ 终止任务';
+      }
+    }
+  } catch (e) {
+    showToast(`终止调用失败: ${e}`, 'error');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '⏹ 终止任务';
+    }
+  }
+}
+
+/**
+ * 解析日志中的循环调度状态信息并格式化展示
+ * 在 appendLog 中被调用
+ */
+function formatLoopStatusLog(message) {
+  // 匹配状态码 8001/8002/8003/8004 的日志
+  if (message.includes('状态码 8001') || message.includes('进入第') && message.includes('轮循环调度')) {
+    const roundMatch = message.match(/第 (\d+)\/(\d+) 轮/);
+    if (roundMatch) {
+      return `🔄 循环调度 → 第 ${roundMatch[1]}/${roundMatch[2]} 轮`;
+    }
+  }
+  if (message.includes('状态码 8002') || message.includes('评审未通过')) {
+    const reasonMatch = message.match(/评审未通过:?\s*(.*)/);
+    return `⏳ 评审未通过${reasonMatch ? ': ' + reasonMatch[1].substring(0, 80) : ''}`;
+  }
+  if (message.includes('状态码 8003') || message.includes('达到最大循环轮次')) {
+    return `⚠️ 达到最大循环轮次`;
+  }
+  if (message.includes('状态码 8004') || message.includes('强制终止')) {
+    return `🛑 任务被强制终止`;
+  }
+  // 评审通过
+  if (message.includes('评审通过') && message.includes('置信度')) {
+    const confMatch = message.match(/置信度 ([\d.]+)/);
+    return `✅ 评审通过${confMatch ? ' (置信度: ' + confMatch[1] + ')' : ''}`;
+  }
+  // 评审结果行
+  if (message.includes('satisfied=') && message.includes('confidence=')) {
+    const satMatch = message.match(/satisfied=(true|false)/);
+    const confMatch = message.match(/confidence=([\d.]+)/);
+    if (satMatch && confMatch) {
+      return satMatch[1] === 'true'
+        ? `✅ 评审通过 (置信度: ${confMatch[1]})`
+        : `⏳ 评审未通过 (置信度: ${confMatch[1]})`;
+    }
+  }
+  // 循环调度摘要
+  if (message.includes('循环调度摘要')) {
+    const lines = message.split('\n');
+    const summaryLines = lines.filter(l =>
+      l.includes('总轮次') || l.includes('最终状态') || l.includes('confidence=')
+    );
+    if (summaryLines.length > 0) {
+      return '📊 ' + summaryLines.join('\n📊 ');
+    }
+  }
+  return null;
+}

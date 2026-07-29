@@ -170,6 +170,8 @@ export interface SchedulerConfig {
   workerTypes: string[];
   runMode?: 'sdk' | 'pty'; // 运行模式：sdk（默认）或 pty
   permissionMode?: PermissionMode; // 权限模式：auto/ask/bypass，默认 ask
+  maxLoopRounds?: number; // 循环调度最大轮次，默认5
+  loopConfidenceThreshold?: number; // 循环调度置信度阈值，默认0.8
 }
 
 /**
@@ -190,6 +192,8 @@ export interface ArbitrationResult {
   conflicts?: string[];
   requiresUserInput: boolean;
   userPrompt?: string;
+  confidence?: number;          // 仲裁结果置信度 0-1，由LLM给出
+  arbitrationReason?: string;   // 仲裁决策说明
 }
 
 // ==================== 受控执行模式相关类型 ====================
@@ -316,4 +320,52 @@ export interface InjectionResult {
   messageIds: string[];      // 写入ClaudeLink的消息ID
   candidates?: WorkerInstance[]; // 需澄清时返回候选Worker
   error?: string;
+}
+
+// ==================== 循环调度相关类型 ====================
+
+/**
+ * 循环调度状态
+ */
+export enum LoopStatus {
+  RUNNING = "running",              // 循环执行中
+  SATISFIED = "satisfied",          // 评审通过，满足交付标准
+  UNSATISFIED = "unsatisfied",      // 评审未通过，需继续循环
+  MAX_ROUNDS_REACHED = "max_rounds_reached", // 达到最大轮次
+  FORCE_CANCELLED = "force_cancelled"        // 用户强制终止
+}
+
+/**
+ * 循环评审结果（由 ArbitrationEngine.evaluateLoopResult 产出）
+ */
+export interface LoopEvaluation {
+  satisfied: boolean;             // 是否满足交付标准
+  confidence: number;             // 置信度 0-1，由LLM评审给出
+  reason: string;                 // 不满足时的具体原因（满足时可为空）
+  suggestions: string;            // 下轮修正建议
+  roundNumber: number;            // 当前轮次
+}
+
+/**
+ * 循环调度状态码（V1.5新增）
+ */
+export enum LoopStatusCode {
+  ENTER_ROUND = 8001,             // 进入第N轮循环调度
+  REVIEW_FAILED = 8002,           // 评审未通过
+  MAX_ROUNDS_REACHED = 8003,      // 达到最大循环轮次
+  FORCE_CANCELLED = 8004          // 用户强制终止任务
+}
+
+/**
+ * 循环调度上下文（跨轮传递的信息）
+ */
+export interface LoopContext {
+  roundNumber: number;            // 当前轮次
+  maxRounds: number;              // 最大轮次
+  previousResults: Array<{
+    round: number;
+    outputSummary: string;        // 前轮执行结果摘要
+    evaluation: LoopEvaluation;   // 前轮评审结果
+  }>;
+  status: LoopStatus;
 }

@@ -18,12 +18,15 @@ fn main() {
         session_id: Mutex::new(format!("#{}", chrono::Local::now().format("%H%M%S"))),
         scheduler_stdin: tokio::sync::Mutex::new(None),
         pending_injects: Mutex::new(HashMap::new()),
+        pending_force_cancels: Mutex::new(HashMap::new()),
         permission_mode: Mutex::new("ask".to_string()),
         permission_timeout_ms: Mutex::new(120),
         arbitration_mode: Mutex::new("confidence_vote".to_string()),
         same_layer_async: Mutex::new(true),
         max_concurrency: Mutex::new(5),
         task_timeout_ms: Mutex::new(600000),
+        max_loop_rounds: Mutex::new(5),
+        loop_confidence_threshold: Mutex::new(800), // 800 = 0.8
     };
 
     tauri::Builder::default()
@@ -44,6 +47,7 @@ fn main() {
             commands::get_logs_by_trace_id,
             commands::inject_info,
             commands::permission_response,
+            commands::force_cancel_task,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

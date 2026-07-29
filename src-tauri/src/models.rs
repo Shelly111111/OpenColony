@@ -16,6 +16,8 @@ pub struct AppState {
     pub scheduler_stdin: TokioMutex<Option<ChildStdin>>,
     /// 待响应的注入请求（request_id -> oneshot Sender）
     pub pending_injects: Mutex<HashMap<String, oneshot::Sender<serde_json::Value>>>,
+    /// 待响应的强制终止请求（trace_id -> oneshot Sender）
+    pub pending_force_cancels: Mutex<HashMap<String, oneshot::Sender<serde_json::Value>>>,
     /// 当前权限模式（auto / ask / bypass）
     pub permission_mode: Mutex<String>,
     /// 权限审批超时（秒）
@@ -28,6 +30,10 @@ pub struct AppState {
     pub max_concurrency: Mutex<i32>,
     /// 任务超时（毫秒）
     pub task_timeout_ms: Mutex<i32>,
+    /// 循环调度最大轮次
+    pub max_loop_rounds: Mutex<i32>,
+    /// 循环调度置信度阈值（*1000 存储，如 800 = 0.8）
+    pub loop_confidence_threshold: Mutex<i32>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -165,6 +171,10 @@ pub struct SystemConfig {
     pub max_concurrency: i32,
     #[serde(default = "default_task_timeout_ms")]
     pub task_timeout_ms: i32,
+    #[serde(default = "default_max_loop_rounds")]
+    pub max_loop_rounds: i32,
+    #[serde(default = "default_loop_confidence_threshold")]
+    pub loop_confidence_threshold: f64,
 }
 
 fn default_run_mode() -> String {
@@ -195,6 +205,14 @@ fn default_task_timeout_ms() -> i32 {
     600000
 }
 
+fn default_max_loop_rounds() -> i32 {
+    5
+}
+
+fn default_loop_confidence_threshold() -> f64 {
+    0.8
+}
+
 impl Default for SystemConfig {
     fn default() -> Self {
         SystemConfig {
@@ -212,6 +230,8 @@ impl Default for SystemConfig {
             same_layer_async: true,
             max_concurrency: 5,
             task_timeout_ms: 600000,
+            max_loop_rounds: 5,
+            loop_confidence_threshold: 0.8,
         }
     }
 }

@@ -21,6 +21,8 @@ async function loadSettings() {
     document.getElementById('sameLayerAsync').value = String(config.same_layer_async !== undefined ? config.same_layer_async : true);
     document.getElementById('maxConcurrency').value = config.max_concurrency || 5;
     document.getElementById('taskTimeout').value = Math.round((config.task_timeout_ms || 600000) / 1000);
+    document.getElementById('maxLoopRounds').value = config.max_loop_rounds || 5;
+    document.getElementById('loopConfidenceThreshold').value = config.loop_confidence_threshold || 0.8;
 
     document.getElementById('runModeSelect').value = config.run_mode || 'sdk';
     document.getElementById('permissionModeSelect').value = config.permission_mode || 'ask';
@@ -46,6 +48,8 @@ async function saveSettings() {
     same_layer_async: document.getElementById('sameLayerAsync').value === 'true',
     max_concurrency: parseInt(document.getElementById('maxConcurrency').value) || 5,
     task_timeout_ms: (parseInt(document.getElementById('taskTimeout').value) || 600) * 1000,
+    max_loop_rounds: parseInt(document.getElementById('maxLoopRounds').value) || 5,
+    loop_confidence_threshold: parseFloat(document.getElementById('loopConfidenceThreshold').value) || 0.8,
   };
 
   try {

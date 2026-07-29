@@ -23,7 +23,11 @@ import {
   InjectionTiming,
   InjectionStatus,
   RouteDetail,
-  WorkerInstance
+  WorkerInstance,
+  LoopStatus,
+  LoopEvaluation,
+  LoopStatusCode,
+  LoopContext
 } from "./types";
 import { PlanExecutor } from "./plan-executor";
 import { WorkerManager } from "./worker-manager";
@@ -41,6 +45,9 @@ export class MasterScheduler {
   private arbitrationEngine: ArbitrationEngine;
   private tasks: Map<string, MainTask> = new Map();
   private logDb: MessageDB;
+  // 循环调度相关
+  private forceCancelledTraceIds: Set<string> = new Set();  // 被强制终止的 traceId 集合
+  private loopContexts: Map<string, LoopContext> = new Map(); // 各任务的循环上下文
 
   constructor(config: Partial<SchedulerConfig> = {}) {
     this.config = {
@@ -49,7 +56,9 @@ export class MasterScheduler {
       defaultTimeoutMs: config.defaultTimeoutMs || 30 * 60 * 1000, // 30分钟
       arbitrationMode: config.arbitrationMode || ArbitrationMode.CONFIDENCE_VOTE,
       workerTypes: config.workerTypes || ['general_agent'],
-      runMode: config.runMode || 'pty' // 添加 runMode，默认 pty
+      runMode: config.runMode || 'pty', // 添加 runMode，默认 pty
+      maxLoopRounds: config.maxLoopRounds || 5,
+      loopConfidenceThreshold: config.loopConfidenceThreshold || 0.8,
     };
 
     this.planExecutor = new PlanExecutor(this.config);
@@ -62,7 +71,16 @@ export class MasterScheduler {
   }
 
   /**
-   * 提交用户请求，启动任务执行
+   * 提交用户请求，启动循环调度执行
+   *
+   * 循环调度流程（V1.5核心）：
+   * Round N:
+   *   1. Master 整理需求（含前轮执行反馈）
+   *   2. Plan 拆解 + Execute DAG
+   *   3. Arbitrate 合并结果
+   *   4. 评审：结果置信度是否满足阈值？
+   *      ├─ 满足 → 输出最终结果，结束循环
+   *      └─ 不满足 → 整理反馈，进入下轮
    */
   async submitRequest(userRequest: string, options: {
     name?: string;
@@ -74,10 +92,12 @@ export class MasterScheduler {
   } = {}): Promise<TaskResult> {
     const traceId = uuidv4();
     const startTime = Date.now();
+    const maxLoopRounds = this.config.maxLoopRounds || 5;
+    const confidenceThreshold = this.config.loopConfidenceThreshold || 0.8;
 
     // 检查LLM状态
     getLLMClient(); // 确保LLM客户端已初始化
-    log({ prefix: 'Master', message: '使用真实LLM模式' });
+    log({ prefix: 'Master', message: '使用真实LLM模式（循环调度）' });
 
     try {
       // 1. 解析用户需求，提取约束和交付标准
@@ -95,58 +115,152 @@ export class MasterScheduler {
       }
       task.logDir = logDir;
 
-      // 创建统一的Master日志文件（Master + PlanExecutor 共用）
+      // 创建统一的Master日志文件
       const masterLogFile = path.join(logDir, `Master_${traceId}.log`);
       task.masterLogFile = masterLogFile;
 
       log({ logFile: masterLogFile, prefix: 'Master', message: `已创建任务 ${task.id}，TraceID: ${traceId}`, traceId, taskId: task.id });
       log({ logFile: masterLogFile, prefix: 'Master', message: `用户需求: ${userRequest}`, traceId, taskId: task.id });
-      log({ logFile: masterLogFile, prefix: 'Master', message: `日志目录: ${logDir}`, traceId, taskId: task.id });
+      log({ logFile: masterLogFile, prefix: 'Master', message: `循环调度: 最大${maxLoopRounds}轮, 置信度阈值${confidenceThreshold}`, traceId, taskId: task.id });
 
-      // 2. 调用Plan模块拆分任务，构建DAG
-      task.status = TaskStatus.RUNNING;
-      task.startedAt = new Date();
+      // 初始化循环上下文
+      const loopContext: LoopContext = {
+        roundNumber: 0,
+        maxRounds: maxLoopRounds,
+        previousResults: [],
+        status: LoopStatus.RUNNING,
+      };
+      this.loopContexts.set(traceId, loopContext);
 
-      const planOutput = await this.planExecutor.planTask(task);
-      task.subTasks = new Map(planOutput.subTasks.map(st => [st.id, st]));
-      task.dag = planOutput.dag;
+      // ===== 循环调度主体 =====
+      let finalOutput: any = null;
+      let finalConfidence = 0;
 
-      log({ logFile: masterLogFile, prefix: 'Master', message: `任务拆分完成，共 ${planOutput.subTasks.length} 个子任务`, traceId, taskId: task.id });
+      for (let round = 1; round <= maxLoopRounds; round++) {
+        // 检查是否被强制终止
+        if (this.forceCancelledTraceIds.has(traceId)) {
+          loopContext.status = LoopStatus.FORCE_CANCELLED;
+          log({ logFile: masterLogFile, prefix: 'Master', message: `[状态码 8004] 用户强制终止任务`, traceId, taskId: task.id });
+          break;
+        }
 
-      // 3. 执行任务DAG
-      const executionResults = await this.planExecutor.executeDAG(task, this.workerManager);
+        loopContext.roundNumber = round;
+        log({ logFile: masterLogFile, prefix: 'Master', message: `[状态码 8001] 进入第 ${round}/${maxLoopRounds} 轮循环调度`, traceId, taskId: task.id });
 
-      // 4. 校验所有Worker输出
-      log({ logFile: masterLogFile, prefix: 'Master', message: `任务执行完成，开始校验输出`, traceId, taskId: task.id });
-      const validOutputs = this.validateOutputs(executionResults, masterLogFile, traceId, task.id);
+        // 2. 如果非首轮，整理前轮反馈注入任务
+        if (round > 1) {
+          this.injectLoopFeedback(task, loopContext, masterLogFile, traceId);
+        }
 
-      if (validOutputs.length === 0) {
-        throw new Error("所有子任务执行失败，无有效输出");
+        // 3. 调用Plan模块拆分任务，构建DAG
+        task.status = TaskStatus.RUNNING;
+        task.startedAt = task.startedAt || new Date();
+
+        const planOutput = await this.planExecutor.planTask(task);
+        task.subTasks = new Map(planOutput.subTasks.map(st => [st.id, st]));
+        task.dag = planOutput.dag;
+
+        log({ logFile: masterLogFile, prefix: 'Master', message: `第${round}轮任务拆分完成，共 ${planOutput.subTasks.length} 个子任务`, traceId, taskId: task.id });
+
+        // 4. 执行任务DAG
+        const executionResults = await this.planExecutor.executeDAG(task, this.workerManager);
+
+        // 再次检查强制终止（执行过程中可能被取消）
+        if (this.forceCancelledTraceIds.has(traceId)) {
+          loopContext.status = LoopStatus.FORCE_CANCELLED;
+          log({ logFile: masterLogFile, prefix: 'Master', message: `[状态码 8004] 执行中被用户强制终止`, traceId, taskId: task.id });
+          // 仍使用已完成的子任务结果
+          const validPartial = this.validateOutputs(executionResults, masterLogFile, traceId, task.id);
+          if (validPartial.length > 0) {
+            const partialArb = await this.arbitrationEngine.arbitrate(validPartial, task);
+            finalOutput = partialArb.finalOutput;
+            finalConfidence = partialArb.confidence ?? 0.5;
+          }
+          break;
+        }
+
+        // 5. 校验所有Worker输出
+        log({ logFile: masterLogFile, prefix: 'Master', message: `第${round}轮执行完成，开始校验输出`, traceId, taskId: task.id });
+        const validOutputs = this.validateOutputs(executionResults, masterLogFile, traceId, task.id);
+
+        if (validOutputs.length === 0) {
+          log({ logFile: masterLogFile, prefix: 'Master', message: `第${round}轮所有子任务执行失败，无有效输出`, traceId, taskId: task.id, level: 'warn' });
+          if (round === maxLoopRounds) {
+            throw new Error("所有轮次执行均失败，无有效输出");
+          }
+          // 记录本轮失败，继续下一轮
+          loopContext.previousResults.push({
+            round,
+            outputSummary: '本轮所有子任务执行失败',
+            evaluation: {
+              satisfied: false,
+              confidence: 0,
+              reason: '所有子任务执行失败',
+              suggestions: '请调整任务拆分策略或降低任务复杂度',
+              roundNumber: round,
+            },
+          });
+          continue;
+        }
+
+        // 6. 仲裁冲突，合并结果
+        log({ logFile: masterLogFile, prefix: 'Master', message: `开始仲裁合并 ${validOutputs.length} 个有效输出`, traceId, taskId: task.id, silent: true });
+        const arbitrationResult = await this.arbitrationEngine.arbitrate(validOutputs, task);
+
+        if (!arbitrationResult.resolved) {
+          throw new Error(`仲裁失败: ${arbitrationResult.conflicts?.join(', ')}`);
+        }
+
+        finalOutput = arbitrationResult.finalOutput;
+        finalConfidence = arbitrationResult.confidence ?? 0.5;
+
+        // 7. 循环评审：评估结果是否满足交付标准
+        const evaluation = await this.arbitrationEngine.evaluateLoopResult(task, arbitrationResult, round);
+        loopContext.previousResults.push({
+          round,
+          outputSummary: typeof finalOutput === 'string' ? finalOutput.substring(0, 200) : JSON.stringify(finalOutput).substring(0, 200),
+          evaluation,
+        });
+
+        log({ logFile: masterLogFile, prefix: 'Master', message: `第${round}轮评审: satisfied=${evaluation.satisfied}, confidence=${evaluation.confidence.toFixed(2)}, threshold=${confidenceThreshold}`, traceId, taskId: task.id });
+
+        // 判断是否跳出循环：satisfied=true 且 confidence >= threshold
+        if (evaluation.satisfied && evaluation.confidence >= confidenceThreshold) {
+          loopContext.status = LoopStatus.SATISFIED;
+          log({ logFile: masterLogFile, prefix: 'Master', message: `评审通过！置信度 ${evaluation.confidence.toFixed(2)} >= ${confidenceThreshold}，跳出循环`, traceId, taskId: task.id });
+          break;
+        }
+
+        // 未通过评审
+        log({ logFile: masterLogFile, prefix: 'Master', message: `[状态码 8002] 评审未通过: ${evaluation.reason}`, traceId, taskId: task.id });
+        log({ logFile: masterLogFile, prefix: 'Master', message: `修正建议: ${evaluation.suggestions}`, traceId, taskId: task.id });
+
+        if (round === maxLoopRounds) {
+          loopContext.status = LoopStatus.MAX_ROUNDS_REACHED;
+          log({ logFile: masterLogFile, prefix: 'Master', message: `[状态码 8003] 达到最大循环轮次 ${maxLoopRounds}，输出当前最优结果`, traceId, taskId: task.id });
+        }
       }
 
-      // 5. 仲裁冲突，合并结果
-      log({ logFile: masterLogFile, prefix: 'Master', message: `开始仲裁合并 ${validOutputs.length} 个有效输出`, traceId, taskId: task.id, silent: true });
-      const arbitrationResult = await this.arbitrationEngine.arbitrate(validOutputs, task);
-
-      if (!arbitrationResult.resolved) {
-        throw new Error(`仲裁失败: ${arbitrationResult.conflicts?.join(', ')}`);
-      }
-
-      // 6. 生成最终结果
-      const finalOutput = arbitrationResult.finalOutput;
+      // ===== 循环结束，生成最终结果 =====
+      const wasForceCancelled = loopContext.status === LoopStatus.FORCE_CANCELLED;
       task.output = finalOutput;
-      task.status = TaskStatus.COMPLETED;
+      task.status = wasForceCancelled ? TaskStatus.FAILED : TaskStatus.COMPLETED;
       task.completedAt = new Date();
 
       const duration = (Date.now() - startTime) / 1000;
-      log({ logFile: masterLogFile, prefix: 'Master', message: `任务 ${task.id} 执行完成，耗时 ${duration} 秒`, traceId, taskId: task.id });
+      const loopSummary = this.buildLoopSummary(loopContext);
+      log({ logFile: masterLogFile, prefix: 'Master', message: `任务 ${task.id} 执行完成，耗时 ${duration} 秒\n${loopSummary}`, traceId, taskId: task.id });
 
-      // 7. 写入记忆（L1 经验 + L3 画像）
-      this.persistTaskMemory(task, validOutputs, duration, options.projectId, masterLogFile, traceId);
+      // 写入记忆
+      this.persistTaskMemory(task, [], duration, options.projectId, masterLogFile, traceId);
+
+      // 清理循环上下文
+      this.forceCancelledTraceIds.delete(traceId);
+      this.loopContexts.delete(traceId);
 
       return {
-        success: true,
-        data: task.output,
+        success: !wasForceCancelled,
+        data: finalOutput,
         traceId,
         duration
       };
@@ -156,6 +270,10 @@ export class MasterScheduler {
       const task = this.tasks.get(traceId);
       log({ logFile: task?.masterLogFile, prefix: 'Master', message: `任务执行失败: ${error}`, level: 'error', traceId, taskId: task?.id });
 
+      // 清理
+      this.forceCancelledTraceIds.delete(traceId);
+      this.loopContexts.delete(traceId);
+
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
@@ -163,6 +281,65 @@ export class MasterScheduler {
         duration
       };
     }
+  }
+
+  /**
+   * 将前轮反馈注入到任务中，供下轮 Plan 拆解时使用
+   */
+  private injectLoopFeedback(task: MainTask, loopContext: LoopContext, masterLogFile?: string, traceId?: string): void {
+    const lastResult = loopContext.previousResults[loopContext.previousResults.length - 1];
+    if (!lastResult) return;
+
+    const feedback = [
+      `\n\n## 前轮执行反馈（第 ${lastResult.round} 轮）`,
+      `评审结果: ${lastResult.evaluation.satisfied ? '通过' : '未通过'}`,
+      `置信度: ${lastResult.evaluation.confidence.toFixed(2)}`,
+      lastResult.evaluation.reason ? `未达标原因: ${lastResult.evaluation.reason}` : '',
+      lastResult.evaluation.suggestions ? `修正建议: ${lastResult.evaluation.suggestions}` : '',
+      `前轮执行结果摘要: ${lastResult.outputSummary}`,
+    ].filter(Boolean).join('\n');
+
+    // 将反馈附加到用户需求后面，Plan拆解时会读取 userRequest
+    task.userRequest = task.userRequest.split('\n\n## 前轮执行反馈')[0] + feedback;
+
+    log({ logFile: masterLogFile, prefix: 'Master', message: `已注入第${lastResult.round}轮反馈到任务需求中`, traceId, taskId: task.id });
+  }
+
+  /**
+   * 构建循环调度摘要
+   */
+  private buildLoopSummary(loopContext: LoopContext): string {
+    const lines = [
+      `循环调度摘要:`,
+      `  总轮次: ${loopContext.roundNumber}/${loopContext.maxRounds}`,
+      `  最终状态: ${loopContext.status}`,
+    ];
+
+    for (const prev of loopContext.previousResults) {
+      lines.push(`  第${prev.round}轮: confidence=${prev.evaluation.confidence.toFixed(2)}, satisfied=${prev.evaluation.satisfied}`);
+      if (prev.evaluation.reason) {
+        lines.push(`    原因: ${prev.evaluation.reason.substring(0, 100)}`);
+      }
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * 强制终止指定任务
+   */
+  forceCancel(traceId: string): boolean {
+    if (!this.tasks.has(traceId) && !this.loopContexts.has(traceId)) {
+      return false;
+    }
+    this.forceCancelledTraceIds.add(traceId);
+    // 同时尝试终止 PlanExecutor 中的执行
+    const task = this.tasks.get(traceId);
+    if (task) {
+      this.planExecutor.stopExecution(task);
+    }
+    log({ prefix: 'Master', message: `任务 ${traceId} 已被标记为强制终止` });
+    return true;
   }
 
   /**

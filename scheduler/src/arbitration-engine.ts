@@ -13,7 +13,8 @@ import {
   ArbitrationResult,
   ArbitrationMode,
   SchedulerConfig,
-  WorkerOutputSchema
+  WorkerOutputSchema,
+  LoopEvaluation
 } from './types';
 import { log } from './logger';
 import { getLLMClient } from './llm-client';
@@ -114,10 +115,16 @@ ${outputTexts}
 
     const bestIdx = best_index - 1; // 转为0-based
     if (bestIdx >= 0 && bestIdx < outputs.length) {
+      // 从LLM评分中提取最高分，归一化为0-1的置信度
+      const bestScore = scores.find(s => s.index === best_index);
+      const confidence = bestScore ? bestScore.score / 10 : outputs[bestIdx].confidence;
+
       return {
         resolved: true,
         finalOutput: outputs[bestIdx].data,
-        requiresUserInput: false
+        requiresUserInput: false,
+        confidence,
+        arbitrationReason: best_reason
       };
     }
 
@@ -125,7 +132,9 @@ ${outputTexts}
     return {
       resolved: true,
       finalOutput: outputs[0].data,
-      requiresUserInput: false
+      requiresUserInput: false,
+      confidence: outputs[0].confidence,
+      arbitrationReason: '回退到首个输出'
     };
   }
 
@@ -147,7 +156,15 @@ ${outputTexts}
 1. 去除重复内容
 2. 保留各输出中有价值的独到见解
 3. 确保合并结果逻辑连贯、结构清晰
-4. 直接输出合并后的内容，不要添加"合并结果"等前缀`;
+
+请返回JSON格式：
+{
+  "merged_content": "合并后的内容",
+  "confidence": 0.85,
+  "reason": "合并决策说明"
+}
+
+confidence为0-1之间的数字，表示合并结果对用户需求的满足程度。`;
 
     const userPrompt = `## 用户原始需求
 ${userRequest}
@@ -155,11 +172,15 @@ ${userRequest}
 ## 各Worker的输出
 ${outputTexts}
 
-请将以上所有输出合并为一份综合结果，直接输出合并内容。`;
+请将以上所有输出合并为一份综合结果，并给出置信度。`;
 
-    const response = await llm.ask(userPrompt, { systemPrompt, temperature: 0.3 });
+    const response = await llm.askForJSON<{
+      merged_content: string;
+      confidence: number;
+      reason: string;
+    }>(userPrompt, { systemPrompt, temperature: 0.3 });
 
-    if (!response.success || !response.content) {
+    if (!response.success || !response.data) {
       log({ prefix: 'ArbitrationEngine', message: `LLM合并失败，回退到拼接输出: ${response.error}`, level: 'warn', silent: true });
       // fallback: 拼接所有输出
       const merged = outputs.map((o, i) => {
@@ -169,16 +190,20 @@ ${outputTexts}
       return {
         resolved: true,
         finalOutput: merged,
-        requiresUserInput: false
+        requiresUserInput: false,
+        confidence: 0.5,
+        arbitrationReason: 'LLM合并失败，回退到拼接输出'
       };
     }
 
-    log({ prefix: 'ArbitrationEngine', message: `LLM合并完成`, silent: true });
+    log({ prefix: 'ArbitrationEngine', message: `LLM合并完成, 置信度: ${response.data.confidence}`, silent: true });
 
     return {
       resolved: true,
-      finalOutput: response.content,
-      requiresUserInput: false
+      finalOutput: response.data.merged_content,
+      requiresUserInput: false,
+      confidence: response.data.confidence,
+      arbitrationReason: response.data.reason
     };
   }
 
@@ -205,5 +230,115 @@ ${outputTexts}
       source_agent: sourceAgent,
       trace_id: traceId
     };
+  }
+
+  /**
+   * 循环调度评审：使用LLM评估当前轮执行结果是否满足交付标准
+   *
+   * 评审依据：
+   * - 用户原始需求
+   * - 用户指定的交付标准（deliveryStandards）
+   * - 当前轮次的执行结果
+   * - 仲裁置信度
+   *
+   * 返回 LoopEvaluation，由 Master 根据置信度阈值判断是否继续循环
+   */
+  async evaluateLoopResult(
+    task: MainTask,
+    arbitrationResult: ArbitrationResult,
+    roundNumber: number
+  ): Promise<LoopEvaluation> {
+    const llm = getLLMClient();
+
+    const outputData = typeof arbitrationResult.finalOutput === 'string'
+      ? arbitrationResult.finalOutput
+      : JSON.stringify(arbitrationResult.finalOutput, null, 2);
+
+    // 截断过长的输出
+    const truncatedOutput = outputData.length > 4000
+      ? outputData.substring(0, 4000) + '\n...(输出已截断)'
+      : outputData;
+
+    const systemPrompt = `你是一位严格的项目验收专家。请根据以下信息判断执行结果是否满足用户需求。
+
+你需要综合评估：
+1. 执行结果是否准确回答了用户的原始需求
+2. 是否满足用户指定的交付标准
+3. 结果的完整性和可用性
+4. 仲裁引擎的置信度参考值: ${arbitrationResult.confidence ?? 'N/A'}
+
+请返回JSON格式：
+{
+  "satisfied": true/false,
+  "confidence": 0.0-1.0,
+  "reason": "不满足的具体原因（如满足则为空）",
+  "suggestions": "下轮修正建议（如满足则为空）"
+}
+
+注意：
+- satisfied 为 true 时 confidence 应 >= 0.7
+- confidence 体现你对结果满足需求的把握程度，不要与仲裁置信度简单等同
+- 如果结果基本满足但有小问题，可以给较高置信度但 satisfied 设为 false，并在 suggestions 中指出修正点`;
+
+    const userPrompt = `## 用户原始需求
+${task.userRequest}
+
+## 交付标准
+${task.deliveryStandards.length > 0 ? task.deliveryStandards.join('\n') : '无明确交付标准'}
+
+## 当前执行结果（第 ${roundNumber} 轮）
+${truncatedOutput}
+
+## 仲裁决策说明
+${arbitrationResult.arbitrationReason || '无'}
+
+请判断当前执行结果是否满足用户需求。`;
+
+    try {
+      const response = await llm.askForJSON<{
+        satisfied: boolean;
+        confidence: number;
+        reason: string;
+        suggestions: string;
+      }>(userPrompt, { systemPrompt, temperature: 0.3 });
+
+      if (!response.success || !response.data) {
+        log({ prefix: 'ArbitrationEngine', message: `循环评审LLM调用失败: ${response.error}，使用仲裁置信度判断`, level: 'warn' });
+        // 降级：直接用仲裁置信度判断
+        const arbConfidence = arbitrationResult.confidence ?? 0.5;
+        return {
+          satisfied: arbConfidence >= 0.8,
+          confidence: arbConfidence,
+          reason: arbConfidence < 0.8 ? '仲裁置信度不足' : '',
+          suggestions: arbConfidence < 0.8 ? '请优化执行策略，提高输出质量' : '',
+          roundNumber,
+        };
+      }
+
+      const { satisfied, confidence, reason, suggestions } = response.data;
+
+      log({
+        prefix: 'ArbitrationEngine',
+        message: `循环评审结果 (第${roundNumber}轮): satisfied=${satisfied}, confidence=${confidence.toFixed(2)}, reason=${reason || '无'}`
+      });
+
+      return {
+        satisfied,
+        confidence,
+        reason: reason || '',
+        suggestions: suggestions || '',
+        roundNumber,
+      };
+    } catch (error) {
+      log({ prefix: 'ArbitrationEngine', message: `循环评审异常: ${error}`, level: 'error' });
+      const arbConfidence = arbitrationResult.confidence ?? 0.5;
+      return {
+        satisfied: arbConfidence >= 0.8,
+        confidence: arbConfidence,
+        reason: '评审异常，使用仲裁置信度降级判断',
+        suggestions: '',
+        roundNumber,
+      };
+    }
   }
 }

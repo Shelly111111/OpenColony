@@ -10,6 +10,8 @@ export interface TaskExecutionSettings {
   sameLayerAsync: boolean;
   maxConcurrency: number;
   taskTimeout: number;
+  maxLoopRounds: number;
+  loopConfidenceThreshold: number;
 }
 
 export interface AppSettings {
@@ -23,6 +25,8 @@ const defaultSettings: AppSettings = {
     sameLayerAsync: true,
     maxConcurrency: 5,
     taskTimeout: 600000,
+    maxLoopRounds: 5,
+    loopConfidenceThreshold: 0.8,
   },
   permissionMode: PermissionMode.ASK,
   permissionTimeoutMs: 120000,
