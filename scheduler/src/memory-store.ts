@@ -428,22 +428,41 @@ export class MemoryStore {
    * 更新项目知识
    */
   updateProjectKnowledge(id: string, updates: { title?: string; content?: string; category?: string }): boolean {
-    const fields: string[] = [];
-    const values: any[] = [];
+    const hasUpdate = updates.title !== undefined || updates.content !== undefined || updates.category !== undefined;
+    if (!hasUpdate) return false;
 
-    if (updates.title !== undefined) { fields.push("title = ?"); values.push(updates.title); }
-    if (updates.content !== undefined) { fields.push("content = ?"); values.push(updates.content); }
-    if (updates.category !== undefined) { fields.push("category = ?"); values.push(updates.category); }
+    const now = new Date().toISOString();
 
-    if (fields.length === 0) return false;
-
-    fields.push("updated_at = ?");
-    values.push(new Date().toISOString());
-    values.push(id);
-
-    const stmt = this.db.prepare(`UPDATE project_knowledge SET ${fields.join(", ")} WHERE id = ?`);
-    const result = stmt.run(...values);
-    return result.changes > 0;
+    // 根据传入字段选择对应的预编译语句，避免 SQL 拼接
+    if (updates.title !== undefined && updates.content !== undefined && updates.category !== undefined) {
+      const stmt = this.db.prepare(`UPDATE project_knowledge SET title = ?, content = ?, category = ?, updated_at = ? WHERE id = ?`);
+      return stmt.run(updates.title, updates.content, updates.category, now, id).changes > 0;
+    }
+    if (updates.title !== undefined && updates.content !== undefined) {
+      const stmt = this.db.prepare(`UPDATE project_knowledge SET title = ?, content = ?, updated_at = ? WHERE id = ?`);
+      return stmt.run(updates.title, updates.content, now, id).changes > 0;
+    }
+    if (updates.title !== undefined && updates.category !== undefined) {
+      const stmt = this.db.prepare(`UPDATE project_knowledge SET title = ?, category = ?, updated_at = ? WHERE id = ?`);
+      return stmt.run(updates.title, updates.category, now, id).changes > 0;
+    }
+    if (updates.content !== undefined && updates.category !== undefined) {
+      const stmt = this.db.prepare(`UPDATE project_knowledge SET content = ?, category = ?, updated_at = ? WHERE id = ?`);
+      return stmt.run(updates.content, updates.category, now, id).changes > 0;
+    }
+    if (updates.title !== undefined) {
+      const stmt = this.db.prepare(`UPDATE project_knowledge SET title = ?, updated_at = ? WHERE id = ?`);
+      return stmt.run(updates.title, now, id).changes > 0;
+    }
+    if (updates.content !== undefined) {
+      const stmt = this.db.prepare(`UPDATE project_knowledge SET content = ?, updated_at = ? WHERE id = ?`);
+      return stmt.run(updates.content, now, id).changes > 0;
+    }
+    if (updates.category !== undefined) {
+      const stmt = this.db.prepare(`UPDATE project_knowledge SET category = ?, updated_at = ? WHERE id = ?`);
+      return stmt.run(updates.category, now, id).changes > 0;
+    }
+    return false;
   }
 
   /**
@@ -644,19 +663,19 @@ export class MemoryStore {
     knowledgeCount: number;
     workerProfileCount: number;
   } {
-    const expQuery = projectId
-      ? `SELECT COUNT(*) as cnt FROM task_experiences WHERE project_id = ?`
-      : `SELECT COUNT(*) as cnt FROM task_experiences`;
+    const expStmt = projectId
+      ? this.db.prepare(`SELECT COUNT(*) as cnt FROM task_experiences WHERE project_id = ?`)
+      : this.db.prepare(`SELECT COUNT(*) as cnt FROM task_experiences`);
     const expResult = projectId
-      ? this.db.prepare(expQuery).get(projectId) as any
-      : this.db.prepare(expQuery).get() as any;
+      ? expStmt.get(projectId) as any
+      : expStmt.get() as any;
 
-    const knlQuery = projectId
-      ? `SELECT COUNT(*) as cnt FROM project_knowledge WHERE project_id = ?`
-      : `SELECT COUNT(*) as cnt FROM project_knowledge`;
+    const knlStmt = projectId
+      ? this.db.prepare(`SELECT COUNT(*) as cnt FROM project_knowledge WHERE project_id = ?`)
+      : this.db.prepare(`SELECT COUNT(*) as cnt FROM project_knowledge`);
     const knlResult = projectId
-      ? this.db.prepare(knlQuery).get(projectId) as any
-      : this.db.prepare(knlQuery).get() as any;
+      ? knlStmt.get(projectId) as any
+      : knlStmt.get() as any;
 
     const wpResult = this.db.prepare(`SELECT COUNT(*) as cnt FROM worker_profiles`).get() as any;
 

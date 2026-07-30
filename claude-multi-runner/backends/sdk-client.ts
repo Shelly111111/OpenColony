@@ -9,6 +9,7 @@ import * as path from 'path';
 import { log, LOG_DIR } from '../utils/logger';
 import { ClaudeLink } from '../../scheduler/src/claude-link';
 import { PermissionMode } from '../../scheduler/src/types';
+import { permissionBus } from '../../scheduler/src/permission-bus';
 import { z } from "zod";
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -280,25 +281,23 @@ export class ClaudeSDKClient {
           const timeout = setTimeout(() => {
             if (pendingPermResolver === resolve) {
               pendingPermResolver = null;
+              permissionBus.removeListener('resolve', onResolve);
               reject(new Error('权限审批超时'));
             }
           }, permTimeoutMs);
           // 清理 timeout 在 resolve 时
           const originalResolve = resolve;
-          pendingPermResolver = (decision: any) => {
+          const onResolve = (decision: any) => {
             clearTimeout(timeout);
-            originalResolve(decision);
+            if (pendingPermResolver === originalResolve) {
+              pendingPermResolver = null;
+              originalResolve(decision);
+            }
           };
+          pendingPermResolver = onResolve;
+          permissionBus.once('resolve', onResolve);
         });
       }
-
-      // 暴露给 index.ts 的权限响应写入接口
-      (globalThis as any).__resolvePermission = (decision: any) => {
-        if (pendingPermResolver) {
-          pendingPermResolver(decision);
-          pendingPermResolver = null;
-        }
-      };
 
       const queryStream = query({
         prompt: generateMessages(),

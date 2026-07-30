@@ -6,6 +6,8 @@ import { MasterScheduler } from "./master";
 import { TaskPriority, ArbitrationMode, InjectionRoute, InjectionTiming, InjectionRequest } from "./types";
 import { log } from "./logger";
 import { MessageDB } from "./message-db";
+import { RoleManager } from "./role-manager";
+import { permissionBus } from "./permission-bus";
 import * as readline from "readline";
 
 // 导出所有公共类型和类
@@ -14,6 +16,18 @@ export { MasterScheduler } from "./master";
 export { PlanExecutor } from "./plan-executor";
 export { WorkerManager } from "./worker-manager";
 export { ArbitrationEngine } from "./arbitration-engine";
+
+/**
+ * 从 RoleManager 配置获取可用的 Worker 类型列表
+ */
+function getWorkerTypesFromConfig(): string[] {
+  try {
+    const roleManager = new RoleManager();
+    const roleIds = roleManager.getAllRoleIds();
+    if (roleIds.length > 0) return roleIds;
+  } catch { /* 配置加载失败时回退到默认值 */ }
+  return ['general_agent'];
+}
 
 /**
  * CLI 入口
@@ -131,10 +145,8 @@ function startStdinListener(scheduler: MasterScheduler): { stop: () => void } {
       const jsonStr = line.slice(permPrefix.length);
       try {
         const decision = JSON.parse(jsonStr);
-        // 调用 sdk-client 暴露的全局 resolve 函数
-        if (typeof (globalThis as any).__resolvePermission === 'function') {
-          (globalThis as any).__resolvePermission(decision);
-        }
+        // 通过事件总线通知 sdk-client 的 pending resolver
+        permissionBus.emit('resolve', decision);
       } catch {
         log({ message: `stdin 权限审批响应 JSON 解析失败: ${jsonStr}`, level: 'error', silent: true });
       }
@@ -203,10 +215,11 @@ async function runDefaultMode(mode: 'sdk' | 'pty' = 'sdk', userRequest?: string)
   log({ message: `=== 调度中心默认模式 (${mode.toUpperCase()}模式) ===` });
 
   // 使用默认配置创建调度器
+  const workerTypes = getWorkerTypesFromConfig();
   const scheduler = new MasterScheduler({
     maxWorkers: 3,
     arbitrationMode: 'confidence_vote' as ArbitrationMode,
-    workerTypes: ['general_agent', 'code_agent', 'review_agent'],
+    workerTypes,
     runMode: mode // 设置运行模式
   });
 
@@ -376,10 +389,11 @@ async function runCommand(args: string[]) {
   }
 
   // 创建调度器
+  const workerTypes = getWorkerTypesFromConfig();
   const scheduler = new MasterScheduler({
     maxWorkers: options.maxWorkers,
     arbitrationMode: options.arbitrationMode,
-    workerTypes: ['general_agent', 'code_agent', 'review_agent'],
+    workerTypes,
     maxLoopRounds: process.env.MAX_LOOP_ROUNDS ? parseInt(process.env.MAX_LOOP_ROUNDS) : undefined,
     loopConfidenceThreshold: process.env.LOOP_CONFIDENCE_THRESHOLD ? parseFloat(process.env.LOOP_CONFIDENCE_THRESHOLD) : undefined,
   });
@@ -455,7 +469,7 @@ async function runTest() {
   // 创建调度器
   const scheduler = new MasterScheduler({
     maxWorkers: 2,
-    workerTypes: ['general_agent']
+    workerTypes: getWorkerTypesFromConfig()
   });
 
   try {
