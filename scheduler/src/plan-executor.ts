@@ -135,17 +135,23 @@ export class PlanExecutor {
       // 根据设置决定同层任务的执行方式
       if (this.settings.taskExecution.sameLayerAsync) {
         log({ prefix: 'PlanExecutor', message: `同层任务异步并行执行` });
-        await this.executeLayerAsync(layerTasks, layerWorkers, task, workerManager, completedTasks, executingTasks, results);
+        await this.executeLayerAsync(layerTasks, layerWorkers, task, workerManager, completedTasks, executingTasks, results, claudeLink);
       } else {
         log({ prefix: 'PlanExecutor', message: `同层任务同步串行执行` });
-        await this.executeLayerSync(layerTasks, layerWorkers, task, workerManager, completedTasks, executingTasks, results);
+        await this.executeLayerSync(layerTasks, layerWorkers, task, workerManager, completedTasks, executingTasks, results, claudeLink);
       }
 
-      // 清理Worker
-      for (const w of layerWorkers) {
-        if (isSDKMode) {
-          claudeLink!.unregisterWorker(w.id);
+      // 兜底：清空ClaudeLink中本层所有Worker（防止个别Worker未被及时注销）
+      if (isSDKMode) {
+        const remainingWorkers = claudeLink!.getAllWorkers();
+        if (remainingWorkers.length > 0) {
+          log({ prefix: 'PlanExecutor', message: `兜底清理：ClaudeLink中剩余 ${remainingWorkers.length} 个Worker未注销，执行清空`, level: 'warn' });
+          claudeLink!.clearAllWorkers();
         }
+      }
+
+      // 释放WorkerManager中的Worker资源
+      for (const w of layerWorkers) {
         workerManager.releaseWorker(w.id, task.traceId, task.id);
       }
 
@@ -166,7 +172,8 @@ export class PlanExecutor {
     workerManager: WorkerManager,
     completedTasks: Set<string>,
     executingTasks: Set<string>,
-    results: WorkerOutput[]
+    results: WorkerOutput[],
+    claudeLink: ClaudeLink | null
   ): Promise<void> {
     const maxConcurrency = this.settings.taskExecution.maxConcurrency;
 
@@ -175,6 +182,8 @@ export class PlanExecutor {
         layerTasks.map(async (subTask, index) => {
           const worker = layerWorkers[index];
           await this.executeSingleTaskWithParamPassing(subTask, task, workerManager, worker);
+          // Worker执行完毕，立即从ClaudeLink中注销
+          claudeLink?.unregisterWorker(worker.id);
           completedTasks.add(subTask.id);
           if (subTask.output) {
             results.push(subTask.output);
@@ -189,6 +198,8 @@ export class PlanExecutor {
           batch.map(async (subTask, index) => {
             const worker = workerBatch[index];
             await this.executeSingleTaskWithParamPassing(subTask, task, workerManager, worker);
+            // Worker执行完毕，立即从ClaudeLink中注销
+            claudeLink?.unregisterWorker(worker.id);
             completedTasks.add(subTask.id);
             if (subTask.output) {
               results.push(subTask.output);
@@ -209,12 +220,15 @@ export class PlanExecutor {
     workerManager: WorkerManager,
     completedTasks: Set<string>,
     executingTasks: Set<string>,
-    results: WorkerOutput[]
+    results: WorkerOutput[],
+    claudeLink: ClaudeLink | null
   ): Promise<void> {
     for (let i = 0; i < layerTasks.length; i++) {
       const subTask = layerTasks[i];
       const worker = layerWorkers[i];
       await this.executeSingleTaskWithParamPassing(subTask, task, workerManager, worker);
+      // Worker执行完毕，立即从ClaudeLink中注销
+      claudeLink?.unregisterWorker(worker.id);
       completedTasks.add(subTask.id);
       if (subTask.output) {
         results.push(subTask.output);
