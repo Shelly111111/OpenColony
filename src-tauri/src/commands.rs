@@ -71,6 +71,8 @@ pub async fn submit_task(
         .env("MAX_LOOP_ROUNDS", format!("{}", state.max_loop_rounds.lock().unwrap().clone()))
         .env("LOOP_CONFIDENCE_THRESHOLD", format!("{}", state.loop_confidence_threshold.lock().unwrap().clone() as f64 / 1000.0))
         .env("PROJECT_ID", &project_id)
+        .env("HF_ENDPOINT", &state.hf_endpoint.lock().unwrap().clone())
+        .env("EMBEDDING_TOPN", format!("{}", state.embedding_topn.lock().unwrap().clone()))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::piped());
@@ -503,6 +505,8 @@ pub fn get_system_config() -> SystemConfig {
         task_timeout_ms: env.get("TASK_TIMEOUT_MS").and_then(|v| v.parse().ok()).unwrap_or(stored.task_timeout_ms),
         max_loop_rounds: env.get("MAX_LOOP_ROUNDS").and_then(|v| v.parse().ok()).unwrap_or(stored.max_loop_rounds),
         loop_confidence_threshold: env.get("LOOP_CONFIDENCE_THRESHOLD").and_then(|v| v.parse().ok()).unwrap_or(stored.loop_confidence_threshold),
+        hf_endpoint: env.get("HF_ENDPOINT").cloned().unwrap_or(stored.hf_endpoint),
+        embedding_topn: env.get("EMBEDDING_TOPN").and_then(|v| v.parse().ok()).unwrap_or(stored.embedding_topn),
     }
 }
 
@@ -516,6 +520,8 @@ pub fn save_system_config(config: SystemConfig, state: State<AppState>) -> TaskR
     env_updates.insert("ANTHROPIC_MODEL".to_string(), config.model_name.clone());
     env_updates.insert("PERMISSION_MODE".to_string(), config.permission_mode.clone());
     env_updates.insert("PERMISSION_TIMEOUT_MS".to_string(), format!("{}", config.permission_timeout_ms));
+    env_updates.insert("HF_ENDPOINT".to_string(), config.hf_endpoint.clone());
+    env_updates.insert("EMBEDDING_TOPN".to_string(), format!("{}", config.embedding_topn));
 
     if let Err(e) = utils::update_env_file(&env_target, &env_updates) {
         return TaskResult::err(&e);
@@ -564,6 +570,14 @@ pub fn save_system_config(config: SystemConfig, state: State<AppState>) -> TaskR
                 {
                     let mut lct = state.loop_confidence_threshold.lock().unwrap();
                     *lct = (to_store.loop_confidence_threshold * 1000.0) as i32;
+                }
+                {
+                    let mut hf = state.hf_endpoint.lock().unwrap();
+                    *hf = to_store.hf_endpoint.clone();
+                }
+                {
+                    let mut et = state.embedding_topn.lock().unwrap();
+                    *et = to_store.embedding_topn;
                 }
                 utils::log_info(&format!("[Tauri] 配置已保存: .env + {}", cfg_path.display()));
                 TaskResult::ok_with_data(

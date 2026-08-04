@@ -430,7 +430,7 @@ export class PlanExecutor {
     const projectId = task.projectId || '__global__';
     let experienceContext = '';
     try {
-      const similarExperiences = memoryStore.searchSimilarExperiences(projectId, task.userRequest, 3);
+      const similarExperiences = await memoryStore.searchSimilarExperiences(projectId, task.userRequest);
       if (similarExperiences.length > 0) {
         experienceContext = '\n## 历史相似任务参考（仅供参考，根据实际情况调整，不要照搬）\n';
         for (const { experience, relevanceScore } of similarExperiences) {

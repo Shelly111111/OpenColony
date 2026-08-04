@@ -24,6 +24,10 @@ async function loadSettings() {
     document.getElementById('maxLoopRounds').value = config.max_loop_rounds || 5;
     document.getElementById('loopConfidenceThreshold').value = config.loop_confidence_threshold || 0.8;
 
+    // 向量语义搜索配置
+    document.getElementById('hfEndpoint').value = config.hf_endpoint || '';
+    document.getElementById('embeddingTopn').value = config.embedding_topn || 3;
+
     document.getElementById('runModeSelect').value = config.run_mode || 'sdk';
     document.getElementById('permissionModeSelect').value = config.permission_mode || 'ask';
     document.getElementById('runModeDisplay').textContent = `模式: ${(config.run_mode || 'sdk').toUpperCase()} | 权限: ${(config.permission_mode || 'ask').toUpperCase()}`;
@@ -50,6 +54,8 @@ async function saveSettings() {
     task_timeout_ms: (parseInt(document.getElementById('taskTimeout').value) || 600) * 1000,
     max_loop_rounds: parseInt(document.getElementById('maxLoopRounds').value) || 5,
     loop_confidence_threshold: parseFloat(document.getElementById('loopConfidenceThreshold').value) || 0.8,
+    hf_endpoint: document.getElementById('hfEndpoint').value.trim(),
+    embedding_topn: parseInt(document.getElementById('embeddingTopn').value) || 3,
   };
 
   try {

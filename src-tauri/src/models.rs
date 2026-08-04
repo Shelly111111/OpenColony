@@ -34,6 +34,10 @@ pub struct AppState {
     pub max_loop_rounds: Mutex<i32>,
     /// 循环调度置信度阈值（*1000 存储，如 800 = 0.8）
     pub loop_confidence_threshold: Mutex<i32>,
+    /// HuggingFace 镜像端点
+    pub hf_endpoint: Mutex<String>,
+    /// Embedding 搜索 topN
+    pub embedding_topn: Mutex<i32>,
 }
 
 #[derive(Clone, Serialize, Debug)]
@@ -175,6 +179,10 @@ pub struct SystemConfig {
     pub max_loop_rounds: i32,
     #[serde(default = "default_loop_confidence_threshold")]
     pub loop_confidence_threshold: f64,
+    #[serde(default = "default_hf_endpoint")]
+    pub hf_endpoint: String,
+    #[serde(default = "default_embedding_topn")]
+    pub embedding_topn: i32,
 }
 
 fn default_run_mode() -> String {
@@ -213,6 +221,14 @@ fn default_loop_confidence_threshold() -> f64 {
     0.8
 }
 
+fn default_hf_endpoint() -> String {
+    String::new()
+}
+
+fn default_embedding_topn() -> i32 {
+    3
+}
+
 impl Default for SystemConfig {
     fn default() -> Self {
         SystemConfig {
@@ -232,6 +248,8 @@ impl Default for SystemConfig {
             task_timeout_ms: 600000,
             max_loop_rounds: 5,
             loop_confidence_threshold: 0.8,
+            hf_endpoint: String::new(),
+            embedding_topn: 3,
         }
     }
 }
