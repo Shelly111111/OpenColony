@@ -136,33 +136,6 @@ export class ClaudeSDKClient {
               }]
             };
           }
-        ),
-
-        tool(
-          "check_inbox",
-          "检查收件箱，获取其他 Worker 发送给自己的未处理消息",
-          {},
-          async () => {
-            const messages = self.claudeLink.checkInbox(self.workerId);
-            self.claudeLink.markAsReceived(messages.map(m => m.id));
-            if (messages.length === 0) {
-              return {
-                content: [{
-                  type: "text",
-                  text: "收件箱为空"
-                }]
-              };
-            }
-            const messagesText = messages.map(msg =>
-              `[${msg.fromWorkerId}] ${msg.content}`
-            ).join('\n');
-            return {
-              content: [{
-                type: "text",
-                text: `收到 ${messages.length} 条消息:\n${messagesText}`
-              }]
-            };
-          }
         )
       ]
     });
@@ -197,8 +170,7 @@ export class ClaudeSDKClient {
         "mcp__worker-collaboration__send_to",
         "mcp__worker-collaboration__send_to_high",
         "mcp__worker-collaboration__broadcast",
-        "mcp__worker-collaboration__ask_help",
-        "mcp__worker-collaboration__check_inbox"
+        "mcp__worker-collaboration__ask_help"
       ];
 
       const self = this;
