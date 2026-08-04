@@ -4,7 +4,7 @@
 
 ## 项目简介
 
-OpenColony 是一个基于 Claude 的多 Agent 调度系统，将复杂任务自动拆解为 DAG 子任务图，分配给多个 Worker 并行执行，最终汇总输出结果。系统采用三层嵌套架构，支持 SDK 和 PTY 两种运行模式，并提供 Tauri 桌面应用进行可视化管理。
+OpenColony 是一个基于 Claude 的多 Agent 调度系统，将复杂任务自动拆解为 DAG 子任务图，分配给多个 Worker 并行执行，通过循环调度机制反复执行-评审-修正直到满足交付标准，最终汇总输出结果。系统采用三层嵌套架构，支持 SDK 和 PTY 两种运行模式，并提供 Tauri 桌面应用进行可视化管理。
 
 ## 架构概览
 
@@ -21,13 +21,13 @@ OpenColony 是一个基于 Claude 的多 Agent 调度系统，将复杂任务自
 │  └────┬────┘   └──────┬───────┘   └───────┬────────┘   │
 │       │               │                    │            │
 │  ┌────▼────┐   ┌──────▼───────┐   ┌───────▼────────┐   │
-│  │ LLM拆分 │   │  DAG分层调度  │   │  Worker创建/回收│   │
-│  │ 结果合并 │   │  同层并行执行  │   │  角色prompt注入 │   │
+│  │循环调度 │   │  DAG分层调度  │   │  Worker创建/回收│   │
+│  │结果合并 │   │  同层并行执行  │   │  角色prompt注入 │   │
 │  └─────────┘   └──────────────┘   └────────────────┘   │
 │                                                          │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐ │
 │  │ ClaudeLink   │ │ArbitrationEng│ │   MemoryStore    │ │
-│  │  通信总线    │ │  仲裁引擎    │ │  三层记忆系统    │ │
+│  │  通信总线    │ │仲裁+循环评审 │ │  三层记忆系统    │ │
 │  └──────────────┘ └──────────────┘ └──────────────────┘ │
 └──────────────────────────┬──────────────────────────────┘
                            │
@@ -46,13 +46,33 @@ OpenColony 是一个基于 Claude 的多 Agent 调度系统，将复杂任务自
 
 系统采用 **Master → Plan Executor → Worker** 三层架构，将复杂任务自动拆解为可并行的子任务图：
 
-- **Master**：系统的唯一对外交互入口，接收用户需求，调用 LLM 将需求拆解为子任务列表，构建 DAG 依赖图，协调全局执行流程，汇总各 Worker 结果输出最终答案
-- **Plan Executor**：按 DAG 拓扑排序分层调度子任务，同层子任务并行分派给 Worker，管理子任务状态流转（pending → running → completed/failed），处理超时
+- **Master**：系统的唯一对外交互入口，接收用户需求，通过循环调度机制反复执行-评审-修正，协调全局执行流程，汇总各 Worker 结果输出最终答案
+- **Plan Executor**：按 DAG 拓扑排序分层调度子任务，同层子任务并行分派给 Worker，管理子任务状态流转（pending → running → completed/failed），处理超时和重试
 - **Worker Manager**：为每个子任务创建 Worker 实例，注入角色 prompt、技能知识和同层团队信息，跟踪执行进度，收集输出结果
 
 ### DAG 并行执行
 
-子任务按依赖关系构建有向无环图（DAG），通过拓扑排序分层，同层任务并行执行，跨层任务串行等待。Plan Executor 按层级推进，每层所有 Worker 完成后才进入下一层，最大化并行度的同时保证依赖正确性。
+子任务按依赖关系构建有向无环图（DAG），通过拓扑排序分层，同层任务并行执行，跨层任务串行等待。Plan Executor 按层级推进，每层所有 Worker 完成后才进入下一层，最大化并行度的同时保证依赖正确性。同层执行支持异步并行（`sameLayerAsync`）和同步串行两种模式，异步模式下通过 `maxConcurrency` 控制最大并发数。
+
+### 循环调度
+
+系统核心调度机制，Master 以「执行-评审-修正」循环的方式反复执行任务，直到结果满足交付标准或达到最大轮次：
+
+```
+Round N:
+  1. Master 整理需求（首轮为原始需求，后续轮次含前轮反馈）
+  2. Plan 拆解任务 + Execute DAG 执行
+  3. Arbitrate 仲裁合并结果
+  4. 评审：结果置信度是否满足阈值？
+     ├─ 满足 → 输出最终结果，结束循环
+     └─ 不满足 → 整理反馈，进入下一轮
+```
+
+- **最大轮次**：默认 5 轮（`maxLoopRounds` 可配置），达到上限后输出当前最优结果
+- **置信度阈值**：默认 0.8（`loopConfidenceThreshold` 可配置），评审置信度 >= 阈值且 `satisfied=true` 时跳出循环
+- **反馈注入**：未通过评审时，前轮的评审结果（未达标原因、修正建议、结果摘要）自动注入下轮任务需求
+- **强制终止**：用户可随时强制终止循环，系统保留已完成子任务的部分结果
+- **状态码**：进入轮次（8001）、评审未通过（8002）、达到最大轮次（8003）、强制终止（8004）
 
 ### 双模式运行
 
@@ -61,10 +81,18 @@ OpenColony 是一个基于 Claude 的多 Agent 调度系统，将复杂任务自
 
 ### 仲裁引擎
 
-当同一子任务由多个 Worker 执行时，仲裁引擎对多份输出进行评判合并，支持两种模式：
+仲裁引擎承担两个职责：多 Worker 输出仲裁合并 和 循环调度评审。
+
+**输出仲裁**（当多个 Worker 产出结果时合并为最终输出）：
 
 - **置信度投票（confidence_vote）**：由 LLM 对各 Worker 输出评分，取最高置信度者
 - **差异合并（merge_diff）**：由 LLM 整合多个输出为一份统一结果
+
+**循环评审**（每轮执行完成后评估是否满足交付标准）：
+
+- LLM 综合评估用户需求、交付标准、执行结果和仲裁置信度
+- 返回 `satisfied`（是否满足）、`confidence`（置信度）、`reason`（未满足原因）、`suggestions`（修正建议）
+- Master 根据评审结果决定继续循环或输出最终结果
 
 ### ClaudeLink 通信总线
 
@@ -74,14 +102,22 @@ OpenColony 是一个基于 Claude 的多 Agent 调度系统，将复杂任务自
 - **紧急发送**：`send_to_high(target, message)` 高优先级消息，确保送达
 - **广播**：`broadcast(message)` 向所有同层 Worker 广播消息
 - **求助**：`ask_help(question)` 向同层 Worker 请求协助
+- **收件箱**：`check_inbox()` 检查未处理消息，SDK 模式下轮询自动注入补充信息
+
+**Worker 生命周期管理**：
+
+- 每层任务执行前，Worker 注册到 ClaudeLink（仅 SDK 模式）
+- Worker 执行完毕后立即从 ClaudeLink 注销，避免其他 Worker 向已完成的 Worker 发送消息
+- 发送消息时校验目标 Worker 是否仍存在于 ClaudeLink 中，已注销则拒绝发送
+- 每层全部执行完毕后执行兜底清理，防止个别 Worker 因异常未及时注销
 
 所有消息持久化到 SQLite，支持跨进程访问，自动过期清理（默认 7 天）。
 
 ### 三层记忆系统
 
-- **L1 任务经验库**：基于 FTS5 全文搜索，新任务提交时检索相似历史经验，辅助任务拆分和角色分配
-- **L2 项目知识库**：按会话窗口隔离（每个 sessionId 对应独立的知识上下文），存储项目约定、技术栈、结构偏好等，执行时注入 Worker 上下文
-- **L3 Worker 画像库**：全局共享，记录各角色 Worker 的历史表现（成功率、平均置信度、擅长领域），影响角色选择权重
+- **L1 任务经验库**：基于 sqlite-vec 向量语义搜索（本地 ONNX 模型，无需外部 API）优先检索，FTS5 全文搜索降级，新任务提交时检索相似历史经验，辅助任务拆分和角色分配
+- **L2 项目知识库**：按项目 ID 隔离，存储项目约定、技术栈、结构偏好等，任务成功后由 LLM 自动提取知识点，执行时注入 Worker 上下文
+- **L3 Worker 画像库**：全局共享，记录各角色 Worker 的历史表现（成功率、平均置信度、平均耗时、技能统计），影响角色选择权重
 
 ### 受控执行模式
 
@@ -158,11 +194,18 @@ npm start run pty "分析当前目录结构"
 |------|------|
 | `npm start` | 显示帮助信息 |
 | `npm start run [sdk\|pty] <需求>` | 启动调度中心执行任务 |
-| `npm start claude [sdk\|pty] <参数>` | 直接调用 Claude |
+| `npm start claude [sdk\|pty] <参数>` | 直接调用 Claude（通过调度中心） |
+| `npm run claude:direct [sdk\|pty] <参数>` | 直接调用 Claude（跳过调度中心） |
 | `npm run scheduler` | 直接启动调度中心 |
+| `npm run dev` | 开发模式（热重载） |
 | `npm run build` | 编译 TypeScript |
+| `npm run build:watch` | 编译 TypeScript（监视模式） |
+| `npm run lint` | ESLint 代码检查 |
 | `npm run tauri:dev` | Tauri 开发模式 |
 | `npm run tauri:build` | 构建桌面安装包 |
+| `npm run tauri:build:windows` | 构建 Windows 安装包 |
+| `npm run tauri:build:macos` | 构建 macOS 安装包 |
+| `npm run tauri:build:linux` | 构建 Linux 安装包 |
 
 ## 配置说明
 
@@ -174,11 +217,21 @@ ANTHROPIC_BASE_URL=https://api.anthropic.com  # API 端点
 ANTHROPIC_MODEL=claude-3-5-sonnet-20241022    # 模型名称
 PERMISSION_MODE=ask                        # 权限模式：ask / auto / bypass
 PERMISSION_TIMEOUT_MS=120000               # 审批超时（毫秒）
+HF_ENDPOINT=https://hf-mirror.com          # HuggingFace 镜像（国内网络建议配置）
+EMBEDDING_TOPN=3                           # 向量语义搜索返回数量
 ```
 
-### 应用配置（`~/.opencolony/config.json`）
+### 应用配置（`scheduler/config/settings.json`）
 
-Claude 路径、最大 Agent 数、运行模式、仲裁模式、并发参数等。
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `taskExecution.sameLayerAsync` | `true` | 同层任务是否异步并行执行 |
+| `taskExecution.maxConcurrency` | `5` | 异步模式最大并发数 |
+| `taskExecution.taskTimeout` | `600000` | 单任务超时（毫秒） |
+| `taskExecution.maxLoopRounds` | `5` | 循环调度最大轮次 |
+| `taskExecution.loopConfidenceThreshold` | `0.8` | 循环调度置信度阈值 |
+| `permissionMode` | `ask` | 权限模式：ask / auto / bypass |
+| `permissionTimeoutMs` | `120000` | 权限审批超时（毫秒） |
 
 ### 数据存储
 
@@ -186,9 +239,9 @@ Claude 路径、最大 Agent 数、运行模式、仲裁模式、并发参数等
 |------|------|------|
 | 角色配置 | `scheduler/config/role.json` | Agent 角色定义 |
 | 技能配置 | `scheduler/config/skill.json` | 技能列表与描述 |
-| 运行时配置 | `scheduler/config/settings.json` | DAG 调度、重试等参数 |
+| 运行时配置 | `scheduler/config/settings.json` | DAG 调度、循环调度、权限等参数 |
 | 通信数据库 | `~/.opencolony/messages.db` | ClaudeLink 消息与日志（SQLite） |
-| 记忆数据库 | `~/.opencolony/memory.db` | 三层记忆系统（SQLite + FTS5） |
+| 记忆数据库 | `~/.opencolony/memory.db` | 三层记忆系统（SQLite + sqlite-vec + FTS5） |
 | 任务日志 | `worker-logs/<traceId>/` | 按 Trace ID 组织的执行日志 |
 | 环境变量 | 项目根 `.env` | API Key 等敏感配置 |
 
@@ -201,6 +254,7 @@ Claude 路径、最大 Agent 数、运行模式、仲裁模式、并发参数等
 | AI SDK | @anthropic-ai/sdk / @anthropic-ai/claude-agent-sdk |
 | 终端模拟 | node-pty |
 | 数据库 | better-sqlite3（SQLite + WAL / FTS5） |
+| 向量搜索 | sqlite-vec + @xenova/transformers（本地 ONNX 模型） |
 | 工具库 | zod, uuid, p-queue, reqwest, chrono, serde |
 
 ## 文档
