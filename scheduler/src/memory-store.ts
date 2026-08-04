@@ -1,7 +1,7 @@
 /**
  * 记忆存储层
  * 三层记忆检索架构：
- * - L1: 任务经验库（FTS5 全文搜索，新任务提交时检索相似历史）
+ * - L1: 任务经验库（sqlite-vec 向量语义搜索优先，FTS5 全文搜索降级，新任务提交时检索相似历史）
  * - L2: 项目知识库（按 project_id 隔离，注入 Worker 上下文）
  * - L3: Worker 画像库（全局共享，影响角色选择权重）
  */
@@ -11,6 +11,7 @@ import * as fs from "fs";
 import Database from "better-sqlite3";
 import { v4 as uuidv4 } from "uuid";
 import { log } from "./logger";
+import { EmbeddingProvider, LocalEmbeddingProvider } from "./embedding-provider";
 
 // ==================== 类型定义 ====================
 
@@ -62,6 +63,9 @@ export interface ExperienceSearchResult {
 
 export class MemoryStore {
   private db: ReturnType<typeof Database>;
+  private vecAvailable = false;
+  private vecDimension = 384;
+  private embeddingProvider: EmbeddingProvider | null = null;
 
   constructor(dbPath?: string) {
     const defaultPath = path.join(
@@ -79,6 +83,18 @@ export class MemoryStore {
     this.db = new Database(finalPath, { timeout: 5000 });
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
+
+    // 尝试加载 sqlite-vec 扩展
+    this.vecDimension = parseInt(process.env.EMBEDDING_DIMENSION || '384', 10);
+    try {
+      const sqliteVec = require('sqlite-vec');
+      this.db.loadExtension(sqliteVec.getLoadablePath());
+      this.vecAvailable = true;
+      log({ prefix: "MemoryStore", message: `sqlite-vec 扩展加载成功 (dimension=${this.vecDimension})` });
+    } catch (error) {
+      this.vecAvailable = false;
+      log({ prefix: "MemoryStore", message: `sqlite-vec 扩展加载失败，将使用 FTS5 搜索: ${error}`, level: "warn" });
+    }
 
     this.initTables();
     log({ prefix: "MemoryStore", message: `记忆数据库初始化完成: ${finalPath}` });
@@ -140,6 +156,21 @@ export class MemoryStore {
         VALUES (new.rowid, new.user_request, new.condensed_request, new.final_output_summary);
       END;
     `);
+
+    // L1: sqlite-vec 向量虚拟表（语义搜索）
+    if (this.vecAvailable) {
+      try {
+        this.db.exec(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS task_experience_vecs USING vec0(
+            embedding FLOAT[${this.vecDimension}]
+          );
+        `);
+        log({ prefix: "MemoryStore", message: "向量虚拟表 task_experience_vecs 创建成功" });
+      } catch (error) {
+        this.vecAvailable = false;
+        log({ prefix: "MemoryStore", message: `向量虚拟表创建失败: ${error}`, level: "warn" });
+      }
+    }
 
     // L2: 项目知识库
     this.db.exec(`
@@ -208,6 +239,7 @@ export class MemoryStore {
 
   /**
    * 写入任务经验
+   * 如果配置了 EmbeddingProvider 且 sqlite-vec 可用，会异步生成并存储向量
    */
   insertTaskExperience(exp: Omit<TaskExperience, "id" | "createdAt">): string {
     const id = uuidv4();
@@ -219,7 +251,7 @@ export class MemoryStore {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    stmt.run(
+    const result = stmt.run(
       id,
       exp.projectId,
       exp.userRequest,
@@ -235,19 +267,92 @@ export class MemoryStore {
     );
 
     log({ prefix: "MemoryStore", message: `L1 任务经验已写入: ${id} (项目: ${exp.projectId}, 状态: ${exp.status})` });
+
+    // 异步生成并存储向量（不阻塞，失败不影响写入）
+    if (this.embeddingProvider && this.vecAvailable) {
+      const rowid = BigInt(result.lastInsertRowid);
+      const text = `${exp.userRequest} ${exp.condensedRequest || ''}`.trim();
+      this.embeddingProvider.getEmbedding(text)
+        .then(embedding => {
+          this.storeExperienceVector(rowid, embedding);
+          log({ prefix: "MemoryStore", message: `L1 向量已存储: ${id}` });
+        })
+        .catch(error => {
+          log({ prefix: "MemoryStore", message: `L1 向量生成失败: ${id} - ${error}`, level: "warn" });
+        });
+    }
+
     return id;
   }
 
   /**
-   * FTS5 搜索相似任务经验
+   * 搜索相似任务经验
+   * 优先使用向量语义搜索（sqlite-vec），降级到 FTS5 全文搜索，最终降级到模糊搜索
    * 返回按相关性排序的结果，限制 topN
    */
-  searchSimilarExperiences(
+  async searchSimilarExperiences(
     projectId: string,
     query: string,
-    topN: number = 3
+    topN?: number
+  ): Promise<ExperienceSearchResult[]> {
+    const effectiveTopN = topN ?? parseInt(process.env.EMBEDDING_TOPN || '3', 10);
+    // 优先使用向量语义搜索
+    if (this.embeddingProvider && this.vecAvailable) {
+      try {
+        const queryEmbedding = await this.embeddingProvider.getEmbedding(query);
+        const results = this.vectorSearchExperiences(projectId, queryEmbedding, effectiveTopN);
+        if (results.length > 0) {
+          log({ prefix: "MemoryStore", message: `向量搜索命中 ${results.length} 条` });
+          return results;
+        }
+        // 向量搜索无结果，降级到 FTS5
+      } catch (error) {
+        log({ prefix: "MemoryStore", message: `向量搜索失败，降级到 FTS5: ${error}`, level: "warn" });
+      }
+    }
+
+    // FTS5 全文搜索
+    return this.ftsSearchExperiences(projectId, query, effectiveTopN);
+  }
+
+  /**
+   * 向量语义搜索（sqlite-vec）
+   */
+  private vectorSearchExperiences(
+    projectId: string,
+    queryEmbedding: number[],
+    topN: number
   ): ExperienceSearchResult[] {
-    // FTS5 全文搜索，只搜当前项目 + 全局（project_id 为 __global__）
+    const embeddingBuffer = this.embeddingToBuffer(queryEmbedding);
+    // sqlite-vec 要求 KNN 查询使用 k = ? 指定返回数量
+    // 多取候选（乘以3），再按 project_id 过滤，确保 topN 有效结果
+    const candidateCount = topN * 3;
+    const stmt = this.db.prepare(`
+      SELECT te.*, vec.distance
+      FROM task_experience_vecs vec
+      JOIN task_experiences te ON te.rowid = vec.rowid
+      WHERE vec.embedding MATCH vec_f32(?)
+        AND k = ?
+        AND (te.project_id = ? OR te.project_id = '__global__')
+      ORDER BY vec.distance
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(embeddingBuffer, candidateCount, projectId, topN) as any[];
+    return rows.map(row => ({
+      experience: this.rowToTaskExperience(row),
+      relevanceScore: 1 - row.distance, // cosine distance → similarity
+    }));
+  }
+
+  /**
+   * FTS5 全文搜索（词法匹配）
+   */
+  private ftsSearchExperiences(
+    projectId: string,
+    query: string,
+    topN: number
+  ): ExperienceSearchResult[] {
     const ftsQuery = query
       .split(/\s+/)
       .filter(w => w.length > 0)
@@ -273,10 +378,9 @@ export class MemoryStore {
 
       return rows.map(row => ({
         experience: this.rowToTaskExperience(row),
-        relevanceScore: -row.fts_rank, // FTS5 rank 是负数，取反
+        relevanceScore: -row.fts_rank,
       }));
     } catch (error) {
-      // FTS5 可能对特殊字符报错，降级为关键词模糊搜索
       log({ prefix: "MemoryStore", message: `FTS5 搜索失败，降级为模糊搜索: ${error}`, level: "warn" });
       return this.fallbackSearchExperiences(projectId, query, topN);
     }
@@ -324,7 +428,7 @@ export class MemoryStore {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    stmt.run(
+    const copyResult = stmt.run(
       newId,
       targetProjectId,
       original.user_request,
@@ -338,6 +442,22 @@ export class MemoryStore {
       original.duration_seconds,
       original.trace_id
     );
+
+    // 复制向量（如果可用）
+    if (this.vecAvailable) {
+      try {
+        const origRowid = this.db.prepare(`SELECT rowid FROM task_experiences WHERE id = ?`).get(experienceId) as any;
+        const newRowid = BigInt(copyResult.lastInsertRowid);
+        if (origRowid) {
+          this.db.prepare(`
+            INSERT INTO task_experience_vecs(rowid, embedding)
+            SELECT ?, embedding FROM task_experience_vecs WHERE rowid = ?
+          `).run(newRowid, BigInt(origRowid.rowid));
+        }
+      } catch (error) {
+        log({ prefix: "MemoryStore", message: `向量复制失败: ${error}`, level: "warn" });
+      }
+    }
 
     log({ prefix: "MemoryStore", message: `L1 经验已复制: ${experienceId} → ${targetProjectId} (新ID: ${newId})` });
     return newId;
@@ -359,6 +479,91 @@ export class MemoryStore {
       traceId: row.trace_id,
       createdAt: row.created_at,
     };
+  }
+
+  // ==================== 向量搜索工具方法 ====================
+
+  /**
+   * 设置向量嵌入提供者
+   * 设置后，新写入的经验会自动生成向量，搜索时优先使用向量语义匹配
+   */
+  setEmbeddingProvider(provider: EmbeddingProvider): void {
+    if (!this.vecAvailable) {
+      log({ prefix: "MemoryStore", message: "sqlite-vec 不可用，设置 EmbeddingProvider 后搜索仍将使用 FTS5", level: "warn" });
+    }
+    this.embeddingProvider = provider;
+    log({ prefix: "MemoryStore", message: `EmbeddingProvider 已设置 (dimension=${provider.getDimension()})` });
+  }
+
+  /**
+   * 自动初始化本地 EmbeddingProvider
+   * 使用本地 ONNX 模型，无需外部 API Key
+   * 模型在首次调用时自动下载到本地缓存
+   */
+  autoInitEmbeddingProvider(): boolean {
+    try {
+      const provider = new LocalEmbeddingProvider();
+      this.setEmbeddingProvider(provider);
+      return true;
+    } catch (error) {
+      log({ prefix: "MemoryStore", message: `本地 EmbeddingProvider 初始化失败: ${error}`, level: "warn" });
+      return false;
+    }
+  }
+
+  /**
+   * 存储单条经验的向量
+   */
+  private storeExperienceVector(rowid: bigint, embedding: number[]): void {
+    if (!this.vecAvailable) return;
+    const buffer = this.embeddingToBuffer(embedding);
+    // 先删除旧向量（如果存在），再插入新向量
+    this.db.prepare(`DELETE FROM task_experience_vecs WHERE rowid = ?`).run(rowid);
+    this.db.prepare(`INSERT INTO task_experience_vecs(rowid, embedding) VALUES (?, vec_f32(?))`).run(rowid, buffer);
+  }
+
+  /**
+   * 将 embedding 数组转换为 Float32 Buffer（sqlite-vec vec_f32 需要）
+   */
+  private embeddingToBuffer(embedding: number[]): Buffer {
+    const buffer = Buffer.alloc(embedding.length * 4);
+    for (let i = 0; i < embedding.length; i++) {
+      buffer.writeFloatLE(embedding[i], i * 4);
+    }
+    return buffer;
+  }
+
+  /**
+   * 批量重新向量化所有任务经验
+   * 用于迁移已有数据或更换 embedding 模型后重建索引
+   */
+  async reindexAllVectors(onProgress?: (done: number, total: number) => void): Promise<number> {
+    if (!this.embeddingProvider) {
+      throw new Error('未配置 EmbeddingProvider，无法进行向量化');
+    }
+    if (!this.vecAvailable) {
+      throw new Error('sqlite-vec 不可用，无法进行向量化');
+    }
+
+    const rows = this.db.prepare(
+      `SELECT rowid, user_request, condensed_request FROM task_experiences`
+    ).all() as any[];
+    let indexed = 0;
+
+    for (const row of rows) {
+      try {
+        const text = `${row.user_request} ${row.condensed_request || ''}`.trim();
+        const embedding = await this.embeddingProvider.getEmbedding(text);
+        this.storeExperienceVector(BigInt(row.rowid), embedding);
+        indexed++;
+        onProgress?.(indexed, rows.length);
+      } catch (error) {
+        log({ prefix: "MemoryStore", message: `向量化失败 rowid=${row.rowid}: ${error}`, level: "warn" });
+      }
+    }
+
+    log({ prefix: "MemoryStore", message: `批量向量化完成: ${indexed}/${rows.length}` });
+    return indexed;
   }
 
   // ==================== L2: 项目知识库 ====================
@@ -643,10 +848,19 @@ export class MemoryStore {
 
   /**
    * 清理过期的任务经验（默认保留90天）
+   * 同时清理对应的向量数据
    */
   cleanupOldExperiences(retentionDays: number = 90): number {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+
+    if (this.vecAvailable) {
+      // 先清理向量表中对应的记录
+      this.db.prepare(`
+        DELETE FROM task_experience_vecs
+        WHERE rowid IN (SELECT rowid FROM task_experiences WHERE created_at < ?)
+      `).run(cutoffDate.toISOString());
+    }
 
     const stmt = this.db.prepare(`DELETE FROM task_experiences WHERE created_at < ?`);
     const result = stmt.run(cutoffDate.toISOString());

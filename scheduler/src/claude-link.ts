@@ -49,6 +49,17 @@ export class ClaudeLink extends EventEmitter {
     this.emit("workerUnregistered", workerId);
   }
 
+  /**
+   * 兜底清理：清空所有Worker（本层执行完毕后调用，防止个别Worker未被及时注销）
+   */
+  public clearAllWorkers(): void {
+    const count = this.workers.size;
+    if (count === 0) return;
+    this.workers.clear();
+    log({ prefix: 'ClaudeLink', message: `兜底清理：已清空所有Worker (${count}个)` });
+    this.emit("allWorkersCleared");
+  }
+
   public getWorker(workerId: string): WorkerInstance | undefined {
     return this.workers.get(workerId);
   }
@@ -86,6 +97,12 @@ export class ClaudeLink extends EventEmitter {
     content: string,
     context?: Record<string, any>
   ): Promise<Message> {
+    // 检查目标Worker是否仍存在于ClaudeLink中
+    if (!this.workers.has(toWorkerId)) {
+      log({ prefix: 'ClaudeLink', message: `消息发送失败：目标Worker ${toWorkerId} 已不在ClaudeLink中`, level: 'warn' });
+      throw new Error(`目标Worker ${toWorkerId} 已注销，无法发送消息`);
+    }
+
     const message: Message = {
       id: uuidv4(),
       fromWorkerId,

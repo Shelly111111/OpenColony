@@ -27,6 +27,8 @@ fn main() {
         task_timeout_ms: Mutex::new(600000),
         max_loop_rounds: Mutex::new(5),
         loop_confidence_threshold: Mutex::new(800), // 800 = 0.8
+        hf_endpoint: Mutex::new(String::new()),
+        embedding_topn: Mutex::new(3),
     };
 
     tauri::Builder::default()

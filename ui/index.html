@@ -339,6 +339,28 @@
 
           <div class="settings-card">
             <div class="settings-card-header">
+              <h3>🧠 向量语义搜索配置</h3>
+            </div>
+            <div class="settings-body">
+              <div class="form-row">
+                <div class="form-group full-width">
+                  <label>HuggingFace 镜像端点</label>
+                  <input type="text" id="hfEndpoint" class="form-input" placeholder="https://hf-mirror.com" />
+                  <span class="form-hint">国内网络必填，用于下载本地 Embedding 模型；留空则使用官方源</span>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>语义搜索返回数量</label>
+                  <input type="number" id="embeddingTopn" class="form-input small" min="1" max="20" value="3" step="1" />
+                  <span class="form-hint">搜索相似任务经验时返回的最大条数（建议 3-10）</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-card">
+            <div class="settings-card-header">
               <h3>🔌 连接测试</h3>
             </div>
             <div class="settings-body">
