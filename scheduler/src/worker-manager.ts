@@ -186,19 +186,18 @@ export class WorkerManager {
     this.writeLog(logFile, `TraceID: ${traceId}`, traceId, taskId, workerId);
     this.writeLog(logFile, `运行模式: ${mode}`, traceId, taskId, workerId);
 
+    // 创建独立的 ClaudeUnifiedPtyManager（参照 main.ts）
+    const terminalCount = 1; // 每个任务只启动1个终端
+    const manager = new ClaudeUnifiedPtyManager(terminalCount, mode);
+
+    // 设置SIGINT处理：仅终止当前manager，不退出进程
+    const sigintHandler = () => {
+      log({ logFile, prefix: 'WorkerManager', message: "收到SIGINT，正在终止当前终端...", level: 'warn', traceId, taskId, workerId });
+      manager.killAll();
+    };
+    process.on("SIGINT", sigintHandler);
+
     try {
-      // 创建独立的 ClaudeUnifiedPtyManager（参照 main.ts）
-      const terminalCount = 1; // 每个任务只启动1个终端
-      const manager = new ClaudeUnifiedPtyManager(terminalCount, mode);
-
-      // 设置SIGINT处理
-      const sigintHandler = () => {
-        log({ logFile, prefix: 'WorkerManager', message: "正在终止终端...", level: 'warn', traceId, taskId, workerId });
-        manager.killAll();
-        process.exit(0);
-      };
-      process.on("SIGINT", sigintHandler);
-
       this.writeLog(logFile, `[${mode.toUpperCase()}] 初始化管理器...`, traceId, taskId, workerId);
       log({ logFile, prefix: 'WorkerManager', message: `Worker ${worker.id} 初始化 ${mode.toUpperCase()} 管理器...`, traceId, taskId, workerId });
 
@@ -223,10 +222,9 @@ export class WorkerManager {
 
       // 读取输出
       this.writeLog(logFile, `[${mode.toUpperCase()}] 执行完成，读取输出...`, traceId, taskId, workerId);
-      const output = this.readOutputFromClaudeLogs(sessionId, logFile, traceId, taskId, workerId);
-
-      // 清理：移除SIGINT处理器
-      process.removeListener("SIGINT", sigintHandler);
+      const output = mode === 'sdk'
+        ? this.readOutputFromWorkerLog(logFile, traceId, taskId, workerId)
+        : this.readOutputFromClaudeLogs(sessionId, logFile, traceId, taskId, workerId);
 
       // 关闭管理器
       manager.killAll();
@@ -256,6 +254,9 @@ export class WorkerManager {
         trace_id: traceId,
         error: errorMsg
       };
+    } finally {
+      // 确保SIGINT处理器被移除
+      process.removeListener("SIGINT", sigintHandler);
     }
   }
 
@@ -308,6 +309,24 @@ export class WorkerManager {
 
     } catch (error) {
       this.writeLog(logFile, `[ERROR] 读取输出失败: ${error}`, traceId, taskId, workerId);
+      return '';
+    }
+  }
+
+  /**
+   * 从Worker自身日志文件读取输出（SDK模式专用，避免并行时读取错误文件）
+   */
+  private readOutputFromWorkerLog(logFile: string, traceId?: string, taskId?: string, workerId?: string): string {
+    try {
+      if (!fs.existsSync(logFile)) {
+        this.writeLog(logFile, `[WARN] Worker日志文件不存在: ${logFile}`, traceId, taskId, workerId);
+        return '';
+      }
+      const content = fs.readFileSync(logFile, 'utf-8');
+      this.writeLog(logFile, `[SDK] 从Worker日志文件读取输出，长度: ${content.length}`, traceId, taskId, workerId);
+      return content;
+    } catch (error) {
+      this.writeLog(logFile, `[ERROR] 读取Worker日志失败: ${error}`, traceId, taskId, workerId);
       return '';
     }
   }

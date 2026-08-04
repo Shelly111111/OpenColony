@@ -135,6 +135,7 @@ export class MasterScheduler {
       // ===== 循环调度主体 =====
       let finalOutput: any = null;
       let finalConfidence = 0;
+      let lastValidOutputs: WorkerOutput[] = [];
 
       for (let round = 1; round <= maxLoopRounds; round++) {
         // 检查是否被强制终止
@@ -182,6 +183,7 @@ export class MasterScheduler {
         // 5. 校验所有Worker输出
         log({ logFile: masterLogFile, prefix: 'Master', message: `第${round}轮执行完成，开始校验输出`, traceId, taskId: task.id });
         const validOutputs = this.validateOutputs(executionResults, masterLogFile, traceId, task.id);
+        lastValidOutputs = validOutputs;
 
         if (validOutputs.length === 0) {
           log({ logFile: masterLogFile, prefix: 'Master', message: `第${round}轮所有子任务执行失败，无有效输出`, traceId, taskId: task.id, level: 'warn' });
@@ -252,7 +254,7 @@ export class MasterScheduler {
       log({ logFile: masterLogFile, prefix: 'Master', message: `任务 ${task.id} 执行完成，耗时 ${duration} 秒\n${loopSummary}`, traceId, taskId: task.id });
 
       // 写入记忆
-      this.persistTaskMemory(task, [], duration, options.projectId, masterLogFile, traceId);
+      this.persistTaskMemory(task, lastValidOutputs, duration, options.projectId, masterLogFile, traceId);
 
       // 清理循环上下文
       this.forceCancelledTraceIds.delete(traceId);

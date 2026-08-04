@@ -278,7 +278,12 @@ export class MemoryStore {
           log({ prefix: "MemoryStore", message: `L1 向量已存储: ${id}` });
         })
         .catch(error => {
-          log({ prefix: "MemoryStore", message: `L1 向量生成失败: ${id} - ${error}`, level: "warn" });
+          log({ prefix: "MemoryStore", message: `L1 向量生成失败: ${id} - ${error}，该记录将无法被向量搜索检索`, level: "warn" });
+          // 标记该经验缺少向量，便于后续排查
+          try {
+            const updateStmt = this.db.prepare(`UPDATE task_experiences SET condensed_request = COALESCE(condensed_request, '') || ' [VEC_MISSING]' WHERE id = ?`);
+            updateStmt.run(id);
+          } catch { /* 忽略标记失败 */ }
         });
     }
 

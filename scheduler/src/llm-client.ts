@@ -34,7 +34,7 @@ export class LLMClient {
     const apiKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN;
     const baseURL = process.env.ANTHROPIC_BASE_URL;
     this.model = process.env.ANTHROPIC_MODEL ||
-                 'claude-3-5-sonnet-20241022';
+                 'claude-opus-4-6';
 
     if (!apiKey) {
       throw new Error(

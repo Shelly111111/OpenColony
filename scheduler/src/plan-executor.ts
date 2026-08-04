@@ -88,7 +88,6 @@ export class PlanExecutor {
 
     const results: WorkerOutput[] = [];
     const completedTasks = new Set<string>();
-    const executingTasks = new Set<string>();
 
     // 拓扑排序并分层
     const layers = this.topologicalSortAndLayer(task);
@@ -115,8 +114,8 @@ export class PlanExecutor {
       log({ prefix: 'PlanExecutor', message: `为第 ${layer.level + 1} 层创建了 ${layerWorkers.length} 个Worker` });
 
       // 将Worker关联到对应的SubTask
-      for (let i = 0; i < layerTasks.length; i++) {
-        layerTasks[i].worker = layerWorkers[i];
+      for (let j = 0; j < layerTasks.length; j++) {
+        layerTasks[j].worker = layerWorkers[j];
       }
 
       // 只有SDK模式才启用协作功能
@@ -135,10 +134,10 @@ export class PlanExecutor {
       // 根据设置决定同层任务的执行方式
       if (this.settings.taskExecution.sameLayerAsync) {
         log({ prefix: 'PlanExecutor', message: `同层任务异步并行执行` });
-        await this.executeLayerAsync(layerTasks, layerWorkers, task, workerManager, completedTasks, executingTasks, results, claudeLink);
+        await this.executeLayerAsync(layerTasks, layerWorkers, task, workerManager, completedTasks, results, claudeLink);
       } else {
         log({ prefix: 'PlanExecutor', message: `同层任务同步串行执行` });
-        await this.executeLayerSync(layerTasks, layerWorkers, task, workerManager, completedTasks, executingTasks, results, claudeLink);
+        await this.executeLayerSync(layerTasks, layerWorkers, task, workerManager, completedTasks, results, claudeLink);
       }
 
       // 兜底：清空ClaudeLink中本层所有Worker（防止个别Worker未被及时注销）
@@ -171,7 +170,6 @@ export class PlanExecutor {
     task: MainTask,
     workerManager: WorkerManager,
     completedTasks: Set<string>,
-    executingTasks: Set<string>,
     results: WorkerOutput[],
     claudeLink: ClaudeLink | null
   ): Promise<void> {
@@ -219,7 +217,6 @@ export class PlanExecutor {
     task: MainTask,
     workerManager: WorkerManager,
     completedTasks: Set<string>,
-    executingTasks: Set<string>,
     results: WorkerOutput[],
     claudeLink: ClaudeLink | null
   ): Promise<void> {
@@ -347,46 +344,53 @@ export class PlanExecutor {
     workerManager: WorkerManager,
     worker?: WorkerInstance
   ): Promise<void> {
-    try {
-      subTask.status = TaskStatus.RUNNING;
-      subTask.startedAt = new Date();
+    let lastError: any = null;
 
-      log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `开始执行子任务 ${subTask.id}: ${subTask.name}`, traceId: task.traceId, taskId: subTask.id });
+    while (true) {
+      try {
+        subTask.status = TaskStatus.RUNNING;
+        subTask.startedAt = new Date();
 
-      if (subTask.dependencies.length > 0) {
-        const enhancedCommand = this.buildEnhancedCommand(subTask, task);
-        subTask.command = enhancedCommand;
-      }
+        log({ logFile: task.masterLogFile, prefix: 'PlanExecutor', message: `开始执行子任务 ${subTask.id}: ${subTask.name}`, traceId: task.traceId, taskId: subTask.id });
 
-      const output = await workerManager.executeSubTask(subTask, task.traceId, task.logDir, worker);
-      subTask.output = output;
-      subTask.status = output.status === "fail" ? TaskStatus.FAILED : TaskStatus.COMPLETED;
-      subTask.completedAt = new Date();
+        if (subTask.dependencies.length > 0) {
+          const enhancedCommand = this.buildEnhancedCommand(subTask, task);
+          subTask.command = enhancedCommand;
+        }
 
-      if (output.status === "success") {
-        this.taskOutputs.set(subTask.id, output);
-      }
+        const output = await workerManager.executeSubTask(subTask, task.traceId, task.logDir, worker);
+        subTask.output = output;
+        subTask.status = output.status === "fail" ? TaskStatus.FAILED : TaskStatus.COMPLETED;
+        subTask.completedAt = new Date();
 
-      this.writePlanLog(task.masterLogFile, `子任务 ${subTask.id} 执行完成，状态: ${output.status}`, task.traceId, subTask.id);
+        if (output.status === "success") {
+          this.taskOutputs.set(subTask.id, output);
+        }
 
-      if (output.status === "fail" && subTask.retryCount < subTask.maxRetries) {
-        log({ prefix: 'PlanExecutor', message: `子任务 ${subTask.id} 失败，重试 ${subTask.retryCount + 1}/${subTask.maxRetries}` });
-        subTask.retryCount++;
-        subTask.status = TaskStatus.RETRYING;
-        await this.delay(1000 * Math.pow(2, subTask.retryCount));
-        return this.executeSingleTaskWithParamPassing(subTask, task, workerManager, worker);
-      }
+        this.writePlanLog(task.masterLogFile, `子任务 ${subTask.id} 执行完成，状态: ${output.status}`, task.traceId, subTask.id);
 
-    } catch (error) {
-      log({ prefix: 'PlanExecutor', message: `子任务 ${subTask.id} 执行异常: ${error}`, level: 'error' });
-      subTask.status = TaskStatus.FAILED;
-      subTask.error = error instanceof Error ? error.message : String(error);
-      subTask.completedAt = new Date();
+        if (output.status === "fail" && subTask.retryCount < subTask.maxRetries) {
+          log({ prefix: 'PlanExecutor', message: `子任务 ${subTask.id} 失败，重试 ${subTask.retryCount + 1}/${subTask.maxRetries}` });
+          subTask.retryCount++;
+          subTask.status = TaskStatus.RETRYING;
+          await this.delay(1000 * Math.pow(2, subTask.retryCount));
+          continue; // 重试
+        }
 
-      if (!this.isCriticalPathTask(subTask, task.dag)) {
-        log({ prefix: 'PlanExecutor', message: `子任务 ${subTask.id} 不在关键路径，继续执行其他任务`, level: 'warn' });
-      } else {
-        throw error;
+        return; // 成功或重试次数用尽，退出循环
+
+      } catch (error) {
+        log({ prefix: 'PlanExecutor', message: `子任务 ${subTask.id} 执行异常: ${error}`, level: 'error' });
+        subTask.status = TaskStatus.FAILED;
+        subTask.error = error instanceof Error ? error.message : String(error);
+        subTask.completedAt = new Date();
+
+        if (!this.isCriticalPathTask(subTask, task.dag)) {
+          log({ prefix: 'PlanExecutor', message: `子任务 ${subTask.id} 不在关键路径，继续执行其他任务`, level: 'warn' });
+          return;
+        } else {
+          throw error;
+        }
       }
     }
   }

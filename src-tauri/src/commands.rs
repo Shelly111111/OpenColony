@@ -85,7 +85,7 @@ pub async fn submit_task(
 
     let mut child = cmd.spawn().map_err(|e| format!("启动 scheduler 失败: {}", e))?;
     let pid = child.id().unwrap_or(0);
-    let trace_id = format!("task_{}", chrono::Local::now().format("%Y%m%d%H%M%S"));
+    let trace_id = format!("task_{}_{}", chrono::Local::now().format("%Y%m%d%H%M%S"), &uuid::Uuid::new_v4().to_string()[..8]);
 
     // 取出 stdin 并存入 AppState，供 inject_info 命令使用
     let child_stdin = child.stdin.take();
@@ -120,7 +120,13 @@ pub async fn submit_task(
             while let Ok(Some(line)) = lines.next_line().await {
                 if let Some(rest) = line.strip_prefix("__LOG__:") {
                     // 结构化日志行：解析 JSON 并带 prefix 推送
-                    let parsed: serde_json::Value = serde_json::from_str(rest).unwrap_or_default();
+                    let parsed: serde_json::Value = match serde_json::from_str(rest) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            utils::log_warn(&format!("[Tauri] JSON日志解析失败: {}, 原始: {}", e, &rest[..rest.len().min(200)]));
+                            continue;
+                        }
+                    };
                     let prefix = parsed.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
                     let message = parsed.get("message").and_then(|v| v.as_str()).unwrap_or("");
                     let level = parsed.get("level").and_then(|v| v.as_str()).unwrap_or("info");
