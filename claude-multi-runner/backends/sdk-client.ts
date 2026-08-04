@@ -393,13 +393,10 @@ export class ClaudeSDKClient {
   }
 }
 
-let sdkClientInstance: ClaudeSDKClient | null = null;
-
-export function getSDKClient(workerId: string = 'unknown-worker'): ClaudeSDKClient {
-  if (!sdkClientInstance) {
-    sdkClientInstance = new ClaudeSDKClient(workerId);
-  } else if (workerId !== 'unknown-worker') {
-    sdkClientInstance.setWorkerId(workerId);
-  }
-  return sdkClientInstance;
+/**
+ * 创建新的 ClaudeSDKClient 实例
+ * 每个 Worker 应拥有独立实例，避免并发时 workerId/permissionMode 相互覆盖
+ */
+export function createSDKClient(workerId: string = 'unknown-worker'): ClaudeSDKClient {
+  return new ClaudeSDKClient(workerId);
 }

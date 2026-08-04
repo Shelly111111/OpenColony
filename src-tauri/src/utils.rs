@@ -23,6 +23,12 @@ pub fn log_info(msg: &str) {
     println!("[{}] {}", ts, msg);
 }
 
+/// 警告日志输出
+pub fn log_warn(msg: &str) {
+    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    eprintln!("[{}][WARN] {}", ts, msg);
+}
+
 /// 解析 .env 文件为 HashMap（KEY=VALUE，忽略空行与 # 注释）
 pub fn parse_env_file(path: &Path) -> HashMap<String, String> {
     let mut map = HashMap::new();
