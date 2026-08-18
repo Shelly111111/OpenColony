@@ -19,6 +19,13 @@ import {
 import { log } from './logger';
 import { getLLMClient } from './llm-client';
 
+/** 日志上下文，用于将日志写入文件和数据库 */
+interface LogContext {
+  logFile?: string;
+  traceId?: string;
+  taskId?: string;
+}
+
 export class ArbitrationEngine {
   private config: SchedulerConfig;
 
@@ -26,11 +33,17 @@ export class ArbitrationEngine {
     this.config = config;
   }
 
+  /** 统一日志方法，自动携带上下文 */
+  private logMsg(message: string, ctx: LogContext, level: 'info' | 'warn' | 'error' = 'info', silent = false): void {
+    log({ logFile: ctx.logFile, prefix: 'ArbitrationEngine', message, level, silent, traceId: ctx.traceId, taskId: ctx.taskId });
+  }
+
   /**
    * 仲裁多个Worker的输出，合并为最终结果
    */
-  async arbitrate(outputs: WorkerOutput[], task: MainTask): Promise<ArbitrationResult> {
-    log({ prefix: 'ArbitrationEngine', message: `开始仲裁 ${outputs.length} 个输出，模式: ${this.config.arbitrationMode}`, silent: true });
+  async arbitrate(outputs: WorkerOutput[], task: MainTask, logCtx?: LogContext): Promise<ArbitrationResult> {
+    const ctx = logCtx || {};
+    this.logMsg(`开始仲裁 ${outputs.length} 个输出，模式: ${this.config.arbitrationMode}`, ctx, 'info', true);
 
     if (outputs.length === 0) {
       return {
@@ -41,29 +54,30 @@ export class ArbitrationEngine {
     }
 
     if (outputs.length === 1) {
-      log({ prefix: 'ArbitrationEngine', message: `只有一个输出，直接使用`, silent: true });
+      this.logMsg(`只有一个输出，直接使用`, ctx, 'info', true);
       return {
         resolved: true,
         finalOutput: outputs[0].data,
-        requiresUserInput: false
+        requiresUserInput: false,
+        confidence: outputs[0].confidence,
       };
     }
 
     switch (this.config.arbitrationMode) {
       case ArbitrationMode.CONFIDENCE_VOTE:
-        return this.llmConfidenceVote(outputs, task);
+        return this.llmConfidenceVote(outputs, task, ctx);
       case ArbitrationMode.MERGE_DIFF:
-        return this.llmMergeDiff(outputs, task);
+        return this.llmMergeDiff(outputs, task, ctx);
       default:
-        return this.llmConfidenceVote(outputs, task);
+        return this.llmConfidenceVote(outputs, task, ctx);
     }
   }
 
   /**
    * 置信度投票：LLM 依次对每个输出打分，选出最高分返回
    */
-  private async llmConfidenceVote(outputs: WorkerOutput[], task: MainTask): Promise<ArbitrationResult> {
-    log({ prefix: 'ArbitrationEngine', message: `使用 LLM 置信度投票仲裁`, silent: true });
+  private async llmConfidenceVote(outputs: WorkerOutput[], task: MainTask, ctx: LogContext): Promise<ArbitrationResult> {
+    this.logMsg(`使用 LLM 置信度投票仲裁`, ctx, 'info', true);
 
     const llm = getLLMClient();
     const userRequest = task.userRequest;
@@ -100,7 +114,7 @@ ${outputTexts}
     }>(userPrompt, { systemPrompt, temperature: 0.3 });
 
     if (!response.success || !response.data) {
-      log({ prefix: 'ArbitrationEngine', message: `LLM评分失败，回退到选择第一个输出: ${response.error}`, level: 'warn', silent: true });
+      this.logMsg(`LLM评分失败，回退到选择第一个输出: ${response.error}`, ctx, 'warn');
       return {
         resolved: true,
         finalOutput: outputs[0].data,
@@ -110,12 +124,11 @@ ${outputTexts}
 
     const { scores, best_index, best_reason } = response.data;
     const scoreSummary = scores.map(s => `#${s.index}: ${s.score}分 (${s.reason})`).join(', ');
-    log({ prefix: 'ArbitrationEngine', message: `LLM评分: ${scoreSummary}`, silent: true });
-    log({ prefix: 'ArbitrationEngine', message: `选择 #${best_index}: ${best_reason}`, silent: true });
+    this.logMsg(`LLM评分: ${scoreSummary}`, ctx, 'info', true);
+    this.logMsg(`选择 #${best_index}: ${best_reason}`, ctx, 'info', true);
 
     const bestIdx = best_index - 1; // 转为0-based
     if (bestIdx >= 0 && bestIdx < outputs.length) {
-      // 从LLM评分中提取最高分，归一化为0-1的置信度
       const bestScore = scores.find(s => s.index === best_index);
       const confidence = bestScore ? bestScore.score / 10 : outputs[bestIdx].confidence;
 
@@ -128,7 +141,6 @@ ${outputTexts}
       };
     }
 
-    // fallback
     return {
       resolved: true,
       finalOutput: outputs[0].data,
@@ -141,8 +153,8 @@ ${outputTexts}
   /**
    * 差异合并：LLM 根据用户提问，将所有输出合并为一份
    */
-  private async llmMergeDiff(outputs: WorkerOutput[], task: MainTask): Promise<ArbitrationResult> {
-    log({ prefix: 'ArbitrationEngine', message: `使用 LLM 差异合并仲裁`, silent: true });
+  private async llmMergeDiff(outputs: WorkerOutput[], task: MainTask, ctx: LogContext): Promise<ArbitrationResult> {
+    this.logMsg(`使用 LLM 差异合并仲裁`, ctx, 'info', true);
 
     const llm = getLLMClient();
     const userRequest = task.userRequest;
@@ -181,8 +193,7 @@ ${outputTexts}
     }>(userPrompt, { systemPrompt, temperature: 0.3 });
 
     if (!response.success || !response.data) {
-      log({ prefix: 'ArbitrationEngine', message: `LLM合并失败，回退到拼接输出: ${response.error}`, level: 'warn', silent: true });
-      // fallback: 拼接所有输出
+      this.logMsg(`LLM合并失败，回退到拼接输出: ${response.error}`, ctx, 'warn');
       const merged = outputs.map((o, i) => {
         const data = typeof o.data === 'string' ? o.data : JSON.stringify(o.data, null, 2);
         return `## 输出 #${i + 1} (${o.source_agent})\n${data}`;
@@ -196,7 +207,7 @@ ${outputTexts}
       };
     }
 
-    log({ prefix: 'ArbitrationEngine', message: `LLM合并完成, 置信度: ${response.data.confidence}`, silent: true });
+    this.logMsg(`LLM合并完成, 置信度: ${response.data.confidence}`, ctx, 'info', true);
 
     return {
       resolved: true,
@@ -235,50 +246,56 @@ ${outputTexts}
   /**
    * 循环调度评审：使用LLM评估当前轮执行结果是否满足交付标准
    *
-   * 评审依据：
-   * - 用户原始需求
-   * - 用户指定的交付标准（deliveryStandards）
-   * - 当前轮次的执行结果
-   * - 仲裁置信度
+   * 评审LLM同时负责：
+   * 1. 从含系统日志的输出中识别实际执行结果
+   * 2. 判断是否满足用户需求
+   * 3. 返回提取后的干净输出（clean_output）
    *
    * 返回 LoopEvaluation，由 Master 根据置信度阈值判断是否继续循环
    */
   async evaluateLoopResult(
     task: MainTask,
     arbitrationResult: ArbitrationResult,
-    roundNumber: number
+    roundNumber: number,
+    logCtx?: LogContext
   ): Promise<LoopEvaluation> {
+    const ctx = logCtx || {};
     const llm = getLLMClient();
 
     const outputData = typeof arbitrationResult.finalOutput === 'string'
       ? arbitrationResult.finalOutput
       : JSON.stringify(arbitrationResult.finalOutput, null, 2);
 
-    // 截断过长的输出
-    const truncatedOutput = outputData.length > 4000
-      ? outputData.substring(0, 4000) + '\n...(输出已截断)'
-      : outputData;
+    const arbConfidence = arbitrationResult.confidence ?? 0.5;
+
+    // 诊断日志
+    this.logMsg(`[诊断] 循环评审输入: round=${roundNumber}, arbConfidence=${arbConfidence.toFixed(2)}, finalOutput长度=${outputData.length}, finalOutput:\n${outputData}`, ctx);
 
     const systemPrompt = `你是一位严格的项目验收专家。请根据以下信息判断执行结果是否满足用户需求。
 
+注意：执行结果中可能包含系统日志（时间戳、初始化信息、工具调用记录等噪音），你需要忽略这些系统日志，只关注实际的执行结果内容来判断是否满足用户需求。
+
 你需要综合评估：
-1. 执行结果是否准确回答了用户的原始需求
+1. 实际执行结果是否准确回答了用户的原始需求（忽略系统日志）
 2. 是否满足用户指定的交付标准
 3. 结果的完整性和可用性
-4. 仲裁引擎的置信度参考值: ${arbitrationResult.confidence ?? 'N/A'}
+4. 仲裁引擎的置信度参考值: ${arbConfidence.toFixed(2)}
 
 请返回JSON格式：
 {
   "satisfied": true/false,
   "confidence": 0.0-1.0,
   "reason": "不满足的具体原因（如满足则为空）",
-  "suggestions": "下轮修正建议（如满足则为空）"
+  "suggestions": "下轮修正建议（如满足则为空）",
+  "clean_output": "当satisfied为true时，从执行结果中提取的干净内容（去除系统日志等噪音，只保留有意义的执行结果）；当satisfied为false时留空"
 }
 
 注意：
 - satisfied 为 true 时 confidence 应 >= 0.7
-- confidence 体现你对结果满足需求的把握程度，不要与仲裁置信度简单等同
-- 如果结果基本满足但有小问题，可以给较高置信度但 satisfied 设为 false，并在 suggestions 中指出修正点`;
+- confidence 体现你对结果满足需求的把握程度
+- 如果能提取出有意义的干净输出，说明结果实质性地满足了需求，应设 satisfied 为 true
+- 只有结果明显偏离用户需求或存在严重遗漏时，才设 satisfied 为 false
+- clean_output 仅在 satisfied 为 true 时填写，用于返回给用户`;
 
     const userPrompt = `## 用户原始需求
 ${task.userRequest}
@@ -286,13 +303,13 @@ ${task.userRequest}
 ## 交付标准
 ${task.deliveryStandards.length > 0 ? task.deliveryStandards.join('\n') : '无明确交付标准'}
 
-## 当前执行结果（第 ${roundNumber} 轮）
-${truncatedOutput}
+## 当前执行结果（第 ${roundNumber} 轮，可能含系统日志）
+${outputData}
 
 ## 仲裁决策说明
 ${arbitrationResult.arbitrationReason || '无'}
 
-请判断当前执行结果是否满足用户需求。`;
+请忽略系统日志噪音，根据实际执行结果判断是否满足用户需求，并提取干净输出。`;
 
     try {
       const response = await llm.askForJSON<{
@@ -300,11 +317,11 @@ ${arbitrationResult.arbitrationReason || '无'}
         confidence: number;
         reason: string;
         suggestions: string;
+        clean_output?: string;
       }>(userPrompt, { systemPrompt, temperature: 0.3 });
 
       if (!response.success || !response.data) {
-        log({ prefix: 'ArbitrationEngine', message: `循环评审LLM调用失败: ${response.error}，使用仲裁置信度判断`, level: 'warn' });
-        // 降级：直接用仲裁置信度判断
+        this.logMsg(`循环评审LLM调用失败: ${response.error}，使用仲裁置信度判断`, ctx, 'warn');
         const arbConfidence = arbitrationResult.confidence ?? 0.5;
         return {
           satisfied: arbConfidence >= 0.8,
@@ -312,25 +329,29 @@ ${arbitrationResult.arbitrationReason || '无'}
           reason: arbConfidence < 0.8 ? '仲裁置信度不足' : '',
           suggestions: arbConfidence < 0.8 ? '请优化执行策略，提高输出质量' : '',
           roundNumber,
+          finalOutput: arbitrationResult.finalOutput,
         };
       }
 
-      const { satisfied, confidence, reason, suggestions } = response.data;
+      const { satisfied, confidence, reason, suggestions, clean_output } = response.data;
 
-      log({
-        prefix: 'ArbitrationEngine',
-        message: `循环评审结果 (第${roundNumber}轮): satisfied=${satisfied}, confidence=${confidence.toFixed(2)}, reason=${reason || '无'}`
-      });
+      // 使用LLM提取的干净输出，兜底用原始输出
+      const finalCleanOutput = clean_output && clean_output.trim().length > 0
+        ? clean_output
+        : arbitrationResult.finalOutput;
 
+      // 诊断日志
+      this.logMsg(`[诊断] 循环评审结果 (第${roundNumber}轮): satisfied=${satisfied}, confidence=${confidence.toFixed(2)}, reason="${reason}", clean_output长度=${clean_output?.length ?? 'N/A'}`, ctx);
       return {
         satisfied,
         confidence,
         reason: reason || '',
         suggestions: suggestions || '',
         roundNumber,
+        finalOutput: finalCleanOutput,
       };
     } catch (error) {
-      log({ prefix: 'ArbitrationEngine', message: `循环评审异常: ${error}`, level: 'error' });
+      this.logMsg(`循环评审异常: ${error}`, ctx, 'error');
       const arbConfidence = arbitrationResult.confidence ?? 0.5;
       return {
         satisfied: arbConfidence >= 0.8,
@@ -338,6 +359,7 @@ ${arbitrationResult.arbitrationReason || '无'}
         reason: '评审异常，使用仲裁置信度降级判断',
         suggestions: '',
         roundNumber,
+        finalOutput: arbitrationResult.finalOutput,
       };
     }
   }

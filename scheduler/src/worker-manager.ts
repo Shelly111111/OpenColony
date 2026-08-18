@@ -222,9 +222,17 @@ export class WorkerManager {
 
       // 读取输出
       this.writeLog(logFile, `[${mode.toUpperCase()}] 执行完成，读取输出...`, traceId, taskId, workerId);
-      const output = mode === 'sdk'
-        ? this.readOutputFromWorkerLog(logFile, traceId, taskId, workerId)
-        : this.readOutputFromClaudeLogs(sessionId, logFile, traceId, taskId, workerId);
+      let output: string;
+      if (mode === 'sdk') {
+        // SDK模式：Claude输出在manager的session.logFile中，而非worker-manager的logFile
+        const sessionLogFile = manager.getSessionLogFilePath(sessionId);
+        output = this.readOutputFromWorkerLog(sessionLogFile || logFile, traceId, taskId, workerId);
+        if (!sessionLogFile) {
+          log({ logFile, prefix: 'WorkerManager', message: `SDK模式未找到session日志文件，回退到worker日志`, level: 'warn', traceId, taskId, workerId });
+        }
+      } else {
+        output = this.readOutputFromClaudeLogs(sessionId, logFile, traceId, taskId, workerId);
+      }
 
       // 关闭管理器
       manager.killAll();

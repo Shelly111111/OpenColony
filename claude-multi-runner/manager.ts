@@ -77,6 +77,14 @@ export class ClaudeUnifiedPtyManager {
   }
 
   /**
+   * 获取 session 的日志文件路径（SDK模式用于读取Claude输出）
+   */
+  getSessionLogFilePath(sessionId: number = 0): string | undefined {
+    const session = this.sessions.find(s => s.id === sessionId);
+    return session?.logFile;
+  }
+
+  /**
    * 过滤 ANSI 控制码
    */
   private stripAnsi(str: string): string {
