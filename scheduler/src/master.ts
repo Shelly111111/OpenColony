@@ -207,7 +207,7 @@ export class MasterScheduler {
 
         // 6. 仲裁冲突，合并结果
         log({ logFile: masterLogFile, prefix: 'Master', message: `开始仲裁合并 ${validOutputs.length} 个有效输出`, traceId, taskId: task.id, silent: true });
-        const arbitrationResult = await this.arbitrationEngine.arbitrate(validOutputs, task);
+        const arbitrationResult = await this.arbitrationEngine.arbitrate(validOutputs, task, { logFile: masterLogFile, traceId, taskId: task.id });
 
         if (!arbitrationResult.resolved) {
           throw new Error(`仲裁失败: ${arbitrationResult.conflicts?.join(', ')}`);
@@ -217,7 +217,7 @@ export class MasterScheduler {
         finalConfidence = arbitrationResult.confidence ?? 0.5;
 
         // 7. 循环评审：评估结果是否满足交付标准
-        const evaluation = await this.arbitrationEngine.evaluateLoopResult(task, arbitrationResult, round);
+        const evaluation = await this.arbitrationEngine.evaluateLoopResult(task, arbitrationResult, round, { logFile: masterLogFile, traceId, taskId: task.id });
         loopContext.previousResults.push({
           round,
           outputSummary: typeof finalOutput === 'string' ? finalOutput.substring(0, 200) : JSON.stringify(finalOutput).substring(0, 200),
@@ -229,13 +229,18 @@ export class MasterScheduler {
         // 判断是否跳出循环：satisfied=true 且 confidence >= threshold
         if (evaluation.satisfied && evaluation.confidence >= confidenceThreshold) {
           loopContext.status = LoopStatus.SATISFIED;
+          // 使用提取后的干净输出替代原始输出
+          if (evaluation.finalOutput !== undefined) {
+            finalOutput = evaluation.finalOutput;
+          }
           log({ logFile: masterLogFile, prefix: 'Master', message: `评审通过！置信度 ${evaluation.confidence.toFixed(2)} >= ${confidenceThreshold}，跳出循环`, traceId, taskId: task.id });
           break;
         }
 
         // 未通过评审
-        log({ logFile: masterLogFile, prefix: 'Master', message: `[状态码 8002] 评审未通过: ${evaluation.reason}`, traceId, taskId: task.id });
-        log({ logFile: masterLogFile, prefix: 'Master', message: `修正建议: ${evaluation.suggestions}`, traceId, taskId: task.id });
+        log({ logFile: masterLogFile, prefix: 'Master', message: `[状态码 8002] 评审未通过: satisfied=${evaluation.satisfied}, confidence=${evaluation.confidence.toFixed(2)} < threshold=${confidenceThreshold}`, traceId, taskId: task.id });
+        log({ logFile: masterLogFile, prefix: 'Master', message: `[诊断] 评审未通过原因: ${evaluation.reason}`, traceId, taskId: task.id });
+        log({ logFile: masterLogFile, prefix: 'Master', message: `[诊断] 修正建议: ${evaluation.suggestions}`, traceId, taskId: task.id });
 
         if (round === maxLoopRounds) {
           loopContext.status = LoopStatus.MAX_ROUNDS_REACHED;

@@ -344,6 +344,7 @@ export interface LoopEvaluation {
   reason: string;                 // 不满足时的具体原因（满足时可为空）
   suggestions: string;            // 下轮修正建议
   roundNumber: number;            // 当前轮次
+  finalOutput?: any;              // 提取后的干净输出（去除系统日志噪音）
 }
 
 /**
